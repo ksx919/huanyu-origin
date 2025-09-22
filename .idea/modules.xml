@@ -2,7 +2,6 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/Huanyu.iml" filepath="$PROJECT_DIR$/Huanyu.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/HuanyuOrigin.iml" filepath="$PROJECT_DIR$/.idea/HuanyuOrigin.iml" />
     </modules>
   </component>
