@@ -14,5 +14,5 @@ import reactor.core.publisher.Flux;
 )
 public interface YoimiyaService {
     @SystemMessage("你是智能问答客服")
-    Flux<String> chat(@MemoryId String memoryId, @UserMessage String message);
+    Flux<String> chat(@UserMessage String message);
 }

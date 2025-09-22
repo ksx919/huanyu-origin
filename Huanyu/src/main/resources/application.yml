@@ -54,3 +54,29 @@ langchain4j:
 logging:
   level:
     dev.langchain4j: debug
+    com.tanxian.mapper: debug
+    org.springframework.data.redis: debug
+
+# MyBatis-Plus 配置
+mybatis-plus:
+  configuration:
+    # 开启驼峰命名转换
+    map-underscore-to-camel-case: true
+    # 开启二级缓存
+    cache-enabled: true
+    # 打印SQL日志
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      # 全局逻辑删除字段
+      logic-delete-field: deleted
+      # 逻辑删除值
+      logic-delete-value: 1
+      # 逻辑未删除值
+      logic-not-delete-value: 0
+      # 主键类型
+      id-type: auto
+  # mapper文件位置
+  mapper-locations: classpath*:mapper/**/*.xml
+  # 实体类别名包路径
+  type-aliases-package: com.tanxian.entity
