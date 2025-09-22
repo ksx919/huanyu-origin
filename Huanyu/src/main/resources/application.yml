@@ -12,7 +12,6 @@ spring:
       min-idle: 5
       max-active: 20
       max-wait: 3000
-      async-init: true
   data:
     redis:
       host: 120.26.29.90

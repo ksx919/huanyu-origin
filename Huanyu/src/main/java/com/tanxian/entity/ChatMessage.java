@@ -26,12 +26,4 @@ public class ChatMessage {
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
-
-    // 自定义构造函数
-    public ChatMessage(String sessionId, String messageType, String content) {
-        this.sessionId = sessionId;
-        this.messageType = messageType;
-        this.content = content;
-        this.createdAt = LocalDateTime.now();
-    }
 }

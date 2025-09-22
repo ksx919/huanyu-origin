@@ -2,18 +2,4 @@
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.tanxian.mapper.ChatMessageMapper">
-    <select id="selectBySessionIdOrderByCreatedAt" parameterType="String" resultType="com.tanxian.entity.ChatMessage">
-        SELECT id, session_id, message_type, content, created_at
-        FROM chat_messages
-        WHERE session_id = #{sessionId}
-        ORDER BY created_at ASC
-    </select>
-
-    <select id="selectRecentMessagesBySessionId" resultType="com.tanxian.entity.ChatMessage">
-        SELECT id, session_id, message_type, content, created_at
-        FROM chat_messages
-        WHERE session_id = #{sessionId}
-        ORDER BY created_at DESC
-        LIMIT #{limit}
-    </select>
 </mapper>

@@ -19,8 +19,8 @@ public class TestController {
     private RedisTemplate<String,String> redisTemplate;
 
     @GetMapping( value = "/chat" ,produces = "text/html;charset=utf-8")
-    public Flux<String> chat(String message){
-        return yoimiyaService.chat(message);
+    public Flux<String> chat(String sessionId,String message){
+        return yoimiyaService.chat(sessionId,message);
     }
 
     @GetMapping("/redis")

@@ -10,9 +10,10 @@ import reactor.core.publisher.Flux;
 @AiService(
         wiringMode = AiServiceWiringMode.EXPLICIT,
         chatModel = "openAiChatModel",
-        streamingChatModel = "openAiStreamingChatModel"
+        streamingChatModel = "openAiStreamingChatModel",
+        chatMemoryProvider = "chatMemoryProvider"
 )
 public interface YoimiyaService {
-    @SystemMessage("你是智能问答客服")
-    Flux<String> chat(@UserMessage String message);
+    @SystemMessage("你的名字叫“江在杰“,请你以这个身份进行对话")
+    Flux<String> chat(@MemoryId String sessionId, @UserMessage String message);
 }
