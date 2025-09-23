@@ -4,11 +4,15 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.mapper.ChatMessageMapper;
 import com.tanxian.service.MyChatMemoryStore;
-import dev.langchain4j.data.message.*;
+import dev.langchain4j.data.message.AiMessage;
+import dev.langchain4j.data.message.ChatMessageDeserializer;
+import dev.langchain4j.data.message.ChatMessageSerializer;
+import dev.langchain4j.data.message.SystemMessage;
+import dev.langchain4j.data.message.UserMessage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Repository;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
@@ -17,12 +21,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Service
+@Repository
 @Slf4j
 public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     @Autowired
     private StringRedisTemplate redisTemplate;
-    
+
     @Autowired
     private ChatMessageMapper chatMessageMapper;
 
@@ -35,56 +39,51 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             log.info("从Redis获取到会话消息");
             return ChatMessageDeserializer.messagesFromJson(json);
         }
-        
+
         log.info("Redis中无数据，从MySQL查询");
         // Redis中没有数据，从MySQL中查询
         LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(ChatMessage::getSessionId, memoryId.toString())
                 .orderByAsc(ChatMessage::getCreatedAt);
         List<ChatMessage> dbMessages = chatMessageMapper.selectList(queryWrapper);
-        
+
         if (dbMessages == null || dbMessages.isEmpty()) {
             log.error("MySQL中也没有数据，返回空列表");
             return new ArrayList<>();
         }
-        
+
         log.info("从MySQL获取到{}条消息", dbMessages.size());
         // 将数据库消息转换为langchain4j消息格式
         List<dev.langchain4j.data.message.ChatMessage> langchainMessages = convertToLangchainMessages(dbMessages);
-        
+
         // 将查询结果存入Redis，设置1天过期时间
         String newJson = ChatMessageSerializer.messagesToJson(langchainMessages);
         redisTemplate.opsForValue().set(memoryId.toString(), newJson, Duration.ofDays(1));
         log.info("已将查询结果缓存到Redis，过期时间1天");
-        
+
         return langchainMessages;
     }
 
     @Override
     public void updateMessages(Object memoryId, List<dev.langchain4j.data.message.ChatMessage> messages) {
         log.info("更新会话消息，memoryId: {}, 消息数量: {}", memoryId, messages.size());
-        
-        // 过滤掉系统消息，只保存用户和AI消息
-        List<dev.langchain4j.data.message.ChatMessage> filteredMessages = messages.stream()
-                .filter(message -> !(message instanceof SystemMessage))
-                .collect(Collectors.toList());
-        
+
         // 更新Redis，设置1天过期时间
-        String json = ChatMessageSerializer.messagesToJson(filteredMessages);
+        String json = ChatMessageSerializer.messagesToJson(messages);
         redisTemplate.opsForValue().set(memoryId.toString(), json, Duration.ofDays(1));
-        log.info("已更新Redis缓存，过滤后消息数量: {}", filteredMessages.size());
-        
+        log.info("已更新Redis缓存");
+
         // 更新MySQL
         // 先删除该会话的所有消息
         LambdaQueryWrapper<ChatMessage> deleteWrapper = new LambdaQueryWrapper<>();
         deleteWrapper.eq(ChatMessage::getSessionId, memoryId.toString());
         chatMessageMapper.delete(deleteWrapper);
         log.info("已删除MySQL中的旧消息");
-        
+
         // 再插入新的消息
-        List<ChatMessage> dbMessages = convertToDbMessages(memoryId.toString(), filteredMessages);
+        List<ChatMessage> dbMessages = convertToDbMessages(memoryId.toString(), messages);
         log.info("准备插入{}条新消息到MySQL", dbMessages.size());
-        
+
         for (ChatMessage message : dbMessages) {
             chatMessageMapper.insert(message);
         }
@@ -95,7 +94,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     public void deleteMessages(Object memoryId) {
         // 删除Redis中的数据
         redisTemplate.delete(memoryId.toString());
-        
+
         // 删除MySQL中的数据
         LambdaQueryWrapper<ChatMessage> deleteWrapper = new LambdaQueryWrapper<>();
         deleteWrapper.eq(ChatMessage::getSessionId, memoryId.toString());
@@ -107,23 +106,21 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
      * @param sessionId 会话ID
      * @return 可序列化的消息列表
      */
-    @Override
     public List<SerializableChatMessage> getSerializableMessages(String sessionId) {
         List<dev.langchain4j.data.message.ChatMessage> messages = getMessages(sessionId);
-        // 过滤掉系统消息
-        return messages.stream()
-                .filter(message -> !(message instanceof SystemMessage))
-                .map(message -> {
-                    if (message instanceof UserMessage) {
-                        return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
-                    } else if (message instanceof AiMessage) {
-                        return new SerializableChatMessage("AI", ((AiMessage) message).text());
-                    } else {
-                        return new SerializableChatMessage("UNKNOWN", message.toString());
-                    }
-                }).collect(Collectors.toList());
+        return messages.stream().map(message -> {
+            if (message instanceof SystemMessage) {
+                return new SerializableChatMessage("SYSTEM", ((SystemMessage) message).text());
+            } else if (message instanceof UserMessage) {
+                return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
+            } else if (message instanceof AiMessage) {
+                return new SerializableChatMessage("AI", ((AiMessage) message).text());
+            } else {
+                return new SerializableChatMessage("UNKNOWN", message.toString());
+            }
+        }).collect(Collectors.toList());
     }
-    
+
     /**
      * 将数据库消息转换为langchain4j消息格式
      */
@@ -134,7 +131,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             default -> new UserMessage(dbMessage.getContent());
         }).collect(Collectors.toList());
     }
-    
+
     /**
      * 将langchain4j消息转换为数据库消息格式
      */
@@ -142,7 +139,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         return messages.stream().map(message -> {
             ChatMessage dbMessage = new ChatMessage();
             dbMessage.setSessionId(sessionId);
-            
+
             // 根据不同消息类型获取内容
             if (message instanceof UserMessage) {
                 String content = ((UserMessage) message).singleText();
@@ -163,28 +160,28 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                 dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
                 dbMessage.setMessageType("USER");
             }
-            
+
             dbMessage.setCreatedAt(LocalDateTime.now());
             return dbMessage;
         }).collect(Collectors.toList());
     }
-    
+
     /**
      * 可序列化的聊天消息DTO类
      */
     public static class SerializableChatMessage {
         private String type;
         private String content;
-        
+
         public SerializableChatMessage(String type, String content) {
             this.type = type;
             this.content = content;
         }
-        
+
         public String getType() {
             return type;
         }
-        
+
         public String getContent() {
             return content;
         }

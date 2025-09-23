@@ -25,7 +25,7 @@ public class AiChatController {
     @Autowired
     private MyChatMemoryStore myChatMemoryStore;
 
-    @GetMapping("/chat")
+    @GetMapping(value = "/chat" ,produces = "text/html;charset=utf-8")
     @Operation(summary = "与AI角色对话", description = "根据指定的角色类型与AI进行对话")
     public Flux<String> chat(
             @Parameter(name = "sessionId", description = "会话ID", required = true) String sessionId,
