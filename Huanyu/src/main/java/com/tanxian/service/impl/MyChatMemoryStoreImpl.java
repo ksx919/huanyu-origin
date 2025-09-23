@@ -1,18 +1,14 @@
-package com.tanxian.repository;
+package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.mapper.ChatMessageMapper;
-import dev.langchain4j.data.message.AiMessage;
-import dev.langchain4j.data.message.ChatMessageDeserializer;
-import dev.langchain4j.data.message.ChatMessageSerializer;
-import dev.langchain4j.data.message.SystemMessage;
-import dev.langchain4j.data.message.UserMessage;
-import dev.langchain4j.store.memory.chat.ChatMemoryStore;
+import com.tanxian.service.MyChatMemoryStore;
+import dev.langchain4j.data.message.*;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
 import java.time.Duration;
@@ -21,9 +17,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
-@Repository
+@Service
 @Slf4j
-public class MyChatMemoryStore implements ChatMemoryStore {
+public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     @Autowired
     private StringRedisTemplate redisTemplate;
     
@@ -100,12 +96,13 @@ public class MyChatMemoryStore implements ChatMemoryStore {
         deleteWrapper.eq(ChatMessage::getSessionId, memoryId.toString());
         chatMessageMapper.delete(deleteWrapper);
     }
-    
+
     /**
      * 获取可序列化的消息列表，用于API返回
      * @param sessionId 会话ID
      * @return 可序列化的消息列表
      */
+    @Override
     public List<SerializableChatMessage> getSerializableMessages(String sessionId) {
         List<dev.langchain4j.data.message.ChatMessage> messages = getMessages(sessionId);
         return messages.stream().map(message -> {

@@ -1,5 +1,7 @@
 package com.tanxian.service.impl;
 
+import com.tanxian.exception.BusinessException;
+import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.ai.HuTaoService;
 import com.tanxian.service.ai.VentiService;
@@ -21,11 +23,11 @@ public class AiChatServiceImpl implements AiChatService {
 
     @Override
     public Flux<String> chat(String sessionId, String message, short type) {
-        switch (type){
-            case 0: return yoimiyaService.chat(sessionId, message);
-            case 1: return ventiService.chat(sessionId, message);
-            case 2: return huTaoService.chat(sessionId, message);
-            default: return yoimiyaService.chat(sessionId, message);
-        }
+        return switch (type) {
+            case 0 -> yoimiyaService.chat(sessionId, message);
+            case 1 -> ventiService.chat(sessionId, message);
+            case 2 -> huTaoService.chat(sessionId, message);
+            default -> throw new BusinessException(BusinessExceptionEnum.CHAT_TYPE_ERROR);
+        };
     }
 }

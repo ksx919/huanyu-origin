@@ -1,7 +1,8 @@
 package com.tanxian.controller;
 
-import com.tanxian.repository.MyChatMemoryStore;
 import com.tanxian.service.AiChatService;
+import com.tanxian.service.MyChatMemoryStore;
+import com.tanxian.service.impl.MyChatMemoryStoreImpl;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,7 +36,7 @@ public class ChatTestController {
     }
 
     @GetMapping("/getChat")
-    public List<MyChatMemoryStore.SerializableChatMessage> getMessage(String sessionId){
+    public List<MyChatMemoryStoreImpl.SerializableChatMessage> getMessage(String sessionId){
         return myChatMemoryStore.getSerializableMessages(sessionId);
     }
 }
