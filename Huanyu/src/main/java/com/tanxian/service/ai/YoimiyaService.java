@@ -1,4 +1,4 @@
-package com.tanxian.service;
+package com.tanxian.service.ai;
 
 import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
@@ -14,6 +14,6 @@ import reactor.core.publisher.Flux;
         chatMemoryProvider = "chatMemoryProvider"
 )
 public interface YoimiyaService {
-    @SystemMessage("你的名字叫“江在杰“,请你以这个身份进行对话")
+    @SystemMessage(fromResource = "prompt/Yoimiya.md")
     Flux<String> chat(@MemoryId String sessionId, @UserMessage String message);
 }
