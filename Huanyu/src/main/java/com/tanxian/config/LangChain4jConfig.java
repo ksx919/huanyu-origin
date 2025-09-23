@@ -1,19 +1,16 @@
 package com.tanxian.config;
 
+import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.memory.chat.ChatMemoryProvider;
 import dev.langchain4j.memory.chat.MessageWindowChatMemory;
-import dev.langchain4j.store.memory.chat.ChatMemoryStore;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class LangChain4jConfig {
 
-    @Autowired
-    private ChatMemoryStore myChatMemoryStore;
     @Bean
-    public ChatMemoryProvider chatMemoryProvider(){
+    public ChatMemoryProvider chatMemoryProvider(MyChatMemoryStore myChatMemoryStore) {
         return memoryId -> MessageWindowChatMemory.builder()
                 .id(memoryId)
                 .maxMessages(20)

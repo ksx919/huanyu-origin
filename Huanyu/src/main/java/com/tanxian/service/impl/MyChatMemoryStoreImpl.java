@@ -2,188 +2,484 @@ package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tanxian.entity.ChatMessage;
+import com.tanxian.entity.ChatSession;
+import com.tanxian.exception.BusinessException;
+import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.ChatMessageMapper;
+import com.tanxian.mapper.ChatSessionMapper;
 import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
 import dev.langchain4j.data.message.ChatMessageSerializer;
 import dev.langchain4j.data.message.SystemMessage;
 import dev.langchain4j.data.message.UserMessage;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.stereotype.Repository;
+import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-@Repository
+@Service
 @Slf4j
 public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
+
     @Autowired
     private StringRedisTemplate redisTemplate;
 
     @Autowired
     private ChatMessageMapper chatMessageMapper;
 
+    @Autowired
+    private ChatSessionMapper chatSessionMapper;
+
+    // 系统消息模板缓存（从本地文件加载）
+    private final Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
+
+    // 标记是否已初始化
+    private volatile boolean initialized = false;
+
+    // 空构造函数
+    public MyChatMemoryStoreImpl() {
+        log.info("MyChatMemoryStoreImpl 构造函数执行");
+    }
+
+    /**
+     * 延迟初始化系统消息缓存
+     */
+    private void ensureInitialized() {
+        if (!initialized) {
+            synchronized (this) {
+                if (!initialized) {
+                    try {
+                        initSystemMessageCache();
+                        initialized = true;
+                        log.info("系统消息缓存初始化完成");
+                    } catch (Exception e) {
+                        log.error("延迟初始化系统消息缓存失败", e);
+                        throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 加载所有prompt文件到内存缓存
+     */
+    private void initSystemMessageCache() {
+        log.info("开始加载系统消息模板到内存缓存...");
+
+        try {
+            // 加载宵宫模板
+            loadPromptTemplate("yoimiya", "prompt/Yoimiya.md");
+
+            // 加载温迪模板
+            loadPromptTemplate("venti", "prompt/Venti.md");
+
+            // 加载胡桃模板
+            loadPromptTemplate("hutao", "prompt/HuTao.md");
+
+            log.info("系统消息模板加载完成，共加载 {} 个模板", systemMessageCache.size());
+
+        } catch (Exception e) {
+            log.error("加载系统消息模板失败", e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
+    }
+
+    /**
+     * 根据sessionId获取系统消息
+     */
+    private SystemMessage getSystemMessageBySessionId(String sessionId) {
+        ensureInitialized(); // 确保已初始化
+
+        try {
+            String templateKey = determineTemplateKeyFromSessionId(sessionId);
+            String content = systemMessageCache.get(templateKey);
+
+            if (StringUtils.hasText(content)) {
+                return SystemMessage.from(content);
+            }
+
+            // 没找到模板时抛出异常
+            log.error("未找到系统消息模板，templateKey: {}", templateKey);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_NOT_FOUND);
+
+        } catch (BusinessException e) {
+            throw e; // 重新抛出业务异常
+        } catch (Exception e) {
+            log.error("获取系统消息失败，sessionId: {}", sessionId, e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
+    }
+
+    /**
+     * 从本地资源文件加载prompt模板
+     */
+    private void loadPromptTemplate(String templateKey, String resourcePath) {
+        try {
+            ClassPathResource resource = new ClassPathResource(resourcePath);
+            if (resource.exists()) {
+                try (InputStream inputStream = resource.getInputStream();
+                     BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8))) {
+
+                    String content = reader.lines().collect(Collectors.joining("\n"));
+                    if (StringUtils.hasText(content.trim())) {
+                        systemMessageCache.put(templateKey, content);
+                        log.info("已加载模板: {} -> {}", templateKey, resourcePath);
+                    } else {
+                        log.error("模板文件内容为空: {}", resourcePath);
+                        throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+                    }
+                }
+            } else {
+                log.error("模板文件不存在: {}", resourcePath);
+                throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_NOT_FOUND);
+            }
+        } catch (IOException e) {
+            log.error("加载模板文件失败: {}", resourcePath, e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
+    }
+
+    /**
+     * 根据角色类型获取模板key
+     */
+    private String getTemplateKeyByCharacterType(Short characterType) {
+        if (characterType == null) {
+            log.error("角色类型为空");
+            throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
+        }
+
+        return switch (characterType) {
+            case 0 -> "yoimiya";
+            case 1 -> "venti";
+            case 2 -> "hutao";
+            default -> {
+                log.error("不支持的角色类型: {}", characterType);
+                throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
+            }
+        };
+    }
+
+    /**
+     * 根据sessionId确定模板key
+     */
+    private String determineTemplateKeyFromSessionId(String sessionId) {
+        try {
+            LambdaQueryWrapper<ChatSession> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(ChatSession::getSessionId, sessionId);
+            ChatSession chatSession = chatSessionMapper.selectOne(queryWrapper);
+
+            if (chatSession != null) {
+                Short characterType = chatSession.getCharacterType();
+                return getTemplateKeyByCharacterType(characterType);
+            }
+
+            log.error("未找到sessionId对应的ChatSession记录: {}", sessionId);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_NOT_FOUND);
+
+        } catch (BusinessException e) {
+            throw e; // 重新抛出业务异常
+        } catch (Exception e) {
+            log.error("查询ChatSession失败，sessionId: {}", sessionId, e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
+    }
+
+    /**
+     * 生成Redis键名
+     */
+    private String getRedisKey(String sessionId) {
+        return "chat:session:" + sessionId;
+    }
+
     @Override
     public List<dev.langchain4j.data.message.ChatMessage> getMessages(Object memoryId) {
-        log.info("获取会话消息，memoryId: {}", memoryId.toString());
-        // 先从Redis中查询
-        String json = redisTemplate.opsForValue().get(memoryId.toString());
-        if (StringUtils.hasText(json)) {
-            log.info("从Redis获取到会话消息");
-            return ChatMessageDeserializer.messagesFromJson(json);
+        ensureInitialized();
+
+        String sessionId = memoryId.toString();
+        log.info("获取会话消息，sessionId: {}", sessionId);
+
+        try {
+            String redisKey = getRedisKey(sessionId);
+            String json = redisTemplate.opsForValue().get(redisKey);
+            if (StringUtils.hasText(json)) {
+                log.info("从Redis获取到会话消息");
+                List<dev.langchain4j.data.message.ChatMessage> cachedMessages = ChatMessageDeserializer.messagesFromJson(json);
+                return addSystemMessageToMessages(cachedMessages, sessionId);
+            }
+
+            log.info("Redis中无数据，从MySQL查询");
+            LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .orderByAsc(ChatMessage::getCreatedAt);
+            List<ChatMessage> dbMessages = chatMessageMapper.selectList(queryWrapper);
+
+            if (dbMessages == null || dbMessages.isEmpty()) {
+                log.info("MySQL中也没有数据，返回只包含系统消息的列表");
+                return addSystemMessageToMessages(new ArrayList<>(), sessionId);
+            }
+
+            log.info("从MySQL获取到{}条消息", dbMessages.size());
+            List<dev.langchain4j.data.message.ChatMessage> nonSystemMessages = convertToLangchainMessages(dbMessages);
+            String newJson = ChatMessageSerializer.messagesToJson(nonSystemMessages);
+            redisTemplate.opsForValue().set(redisKey, newJson, Duration.ofDays(1));
+            log.info("已将查询结果缓存到Redis，过期时间1天");
+
+            return addSystemMessageToMessages(nonSystemMessages, sessionId);
+
+        } catch (Exception e) {
+            log.error("获取会话消息失败，sessionId: {}", sessionId, e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
         }
-
-        log.info("Redis中无数据，从MySQL查询");
-        // Redis中没有数据，从MySQL中查询
-        LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(ChatMessage::getSessionId, memoryId.toString())
-                .orderByAsc(ChatMessage::getCreatedAt);
-        List<ChatMessage> dbMessages = chatMessageMapper.selectList(queryWrapper);
-
-        if (dbMessages == null || dbMessages.isEmpty()) {
-            log.error("MySQL中也没有数据，返回空列表");
-            return new ArrayList<>();
-        }
-
-        log.info("从MySQL获取到{}条消息", dbMessages.size());
-        // 将数据库消息转换为langchain4j消息格式
-        List<dev.langchain4j.data.message.ChatMessage> langchainMessages = convertToLangchainMessages(dbMessages);
-
-        // 将查询结果存入Redis，设置1天过期时间
-        String newJson = ChatMessageSerializer.messagesToJson(langchainMessages);
-        redisTemplate.opsForValue().set(memoryId.toString(), newJson, Duration.ofDays(1));
-        log.info("已将查询结果缓存到Redis，过期时间1天");
-
-        return langchainMessages;
     }
 
     @Override
     public void updateMessages(Object memoryId, List<dev.langchain4j.data.message.ChatMessage> messages) {
-        log.info("更新会话消息，memoryId: {}, 消息数量: {}", memoryId, messages.size());
+        ensureInitialized();
 
-        // 更新Redis，设置1天过期时间
-        String json = ChatMessageSerializer.messagesToJson(messages);
-        redisTemplate.opsForValue().set(memoryId.toString(), json, Duration.ofDays(1));
-        log.info("已更新Redis缓存");
+        String sessionId = memoryId.toString();
+        log.info("更新会话消息，sessionId: {}, 消息数量: {}", sessionId, messages.size());
 
-        // 更新MySQL
-        // 先删除该会话的所有消息
-        LambdaQueryWrapper<ChatMessage> deleteWrapper = new LambdaQueryWrapper<>();
-        deleteWrapper.eq(ChatMessage::getSessionId, memoryId.toString());
-        chatMessageMapper.delete(deleteWrapper);
-        log.info("已删除MySQL中的旧消息");
+        try {
+            List<dev.langchain4j.data.message.ChatMessage> nonSystemMessages = messages.stream()
+                    .filter(msg -> !(msg instanceof SystemMessage))
+                    .collect(Collectors.toList());
 
-        // 再插入新的消息
-        List<ChatMessage> dbMessages = convertToDbMessages(memoryId.toString(), messages);
-        log.info("准备插入{}条新消息到MySQL", dbMessages.size());
+            String redisKey = getRedisKey(sessionId);
+            String json = ChatMessageSerializer.messagesToJson(nonSystemMessages);
+            redisTemplate.opsForValue().set(redisKey, json, Duration.ofDays(1));
+            log.info("已更新Redis缓存");
 
-        for (ChatMessage message : dbMessages) {
-            chatMessageMapper.insert(message);
+            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM");
+            long existingCount = chatMessageMapper.selectCount(countWrapper);
+
+            if (existingCount < nonSystemMessages.size()) {
+                List<ChatMessage> allDbMsgs = convertToDbMessages(sessionId, nonSystemMessages);
+                List<ChatMessage> newDbMsgs = allDbMsgs.subList((int) existingCount, allDbMsgs.size());
+                log.info("数据库已有 {} 条非系统消息，本次追加 {} 条", existingCount, newDbMsgs.size());
+                for (ChatMessage msg : newDbMsgs) {
+                    chatMessageMapper.insert(msg);
+                }
+            } else {
+                log.info("数据库记录已是最新，无需追加");
+            }
+        } catch (Exception e) {
+            log.error("更新会话消息失败，sessionId: {}", sessionId, e);
         }
-        log.info("MySQL消息更新完成");
     }
 
     @Override
     public void deleteMessages(Object memoryId) {
-        // 删除Redis中的数据
-        redisTemplate.delete(memoryId.toString());
+        String sessionId = memoryId.toString();
+        String redisKey = getRedisKey(sessionId);
 
-        // 删除MySQL中的数据
-        LambdaQueryWrapper<ChatMessage> deleteWrapper = new LambdaQueryWrapper<>();
-        deleteWrapper.eq(ChatMessage::getSessionId, memoryId.toString());
-        chatMessageMapper.delete(deleteWrapper);
+        try {
+            redisTemplate.delete(redisKey);
+            log.info("已删除Redis缓存: {}", redisKey);
+
+            LambdaQueryWrapper<ChatMessage> deleteWrapper = new LambdaQueryWrapper<>();
+            deleteWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM");
+            chatMessageMapper.delete(deleteWrapper);
+            log.info("已删除MySQL中的非系统消息: sessionId={}", sessionId);
+        } catch (Exception e) {
+            log.error("删除会话消息失败，sessionId: {}", sessionId, e);
+        }
     }
 
     /**
-     * 获取可序列化的消息列表，用于API返回
-     * @param sessionId 会话ID
-     * @return 可序列化的消息列表
+     * 动态添加SYSTEM消息到消息列表前面
      */
-    public List<SerializableChatMessage> getSerializableMessages(String sessionId) {
-        List<dev.langchain4j.data.message.ChatMessage> messages = getMessages(sessionId);
-        return messages.stream().map(message -> {
-            if (message instanceof SystemMessage) {
-                return new SerializableChatMessage("SYSTEM", ((SystemMessage) message).text());
-            } else if (message instanceof UserMessage) {
-                return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
-            } else if (message instanceof AiMessage) {
-                return new SerializableChatMessage("AI", ((AiMessage) message).text());
-            } else {
-                return new SerializableChatMessage("UNKNOWN", message.toString());
-            }
-        }).collect(Collectors.toList());
+    private List<dev.langchain4j.data.message.ChatMessage> addSystemMessageToMessages(
+            List<dev.langchain4j.data.message.ChatMessage> messages, String sessionId) {
+        List<dev.langchain4j.data.message.ChatMessage> result = new ArrayList<>();
+
+        SystemMessage systemMessage = getSystemMessageBySessionId(sessionId);
+        result.add(systemMessage);
+        result.addAll(messages);
+
+        return result;
     }
 
     /**
      * 将数据库消息转换为langchain4j消息格式
      */
     private List<dev.langchain4j.data.message.ChatMessage> convertToLangchainMessages(List<ChatMessage> dbMessages) {
-        return dbMessages.stream().map(dbMessage -> switch (dbMessage.getMessageType()) {
-            case "ASSISTANT" -> new AiMessage(dbMessage.getContent());
-            case "SYSTEM" -> new SystemMessage(dbMessage.getContent());
-            default -> new UserMessage(dbMessage.getContent());
-        }).collect(Collectors.toList());
+        List<dev.langchain4j.data.message.ChatMessage> result = new ArrayList<>();
+
+        for (ChatMessage dbMessage : dbMessages) {
+            try {
+                if (!"SYSTEM".equals(dbMessage.getMessageType())) {
+                    dev.langchain4j.data.message.ChatMessage message = switch (dbMessage.getMessageType()) {
+                        case "ASSISTANT" -> new AiMessage(dbMessage.getContent());
+                        case "USER" -> new UserMessage(dbMessage.getContent());
+                        default -> {
+                            log.warn("未知消息类型: {}, 当作USER消息处理", dbMessage.getMessageType());
+                            yield new UserMessage(dbMessage.getContent());
+                        }
+                    };
+                    result.add(message);
+                }
+            } catch (Exception e) {
+                log.error("转换消息失败，跳过该消息: {}", dbMessage, e);
+            }
+        }
+
+        return result;
+    }
+
+    /**
+     * 获取可序列化的消息列表，用于API返回
+     */
+    public List<SerializableChatMessage> getSerializableMessages(String sessionId) {
+        try {
+            // 复用getMessages方法的逻辑获取消息
+            List<dev.langchain4j.data.message.ChatMessage> messages = getMessages(sessionId);
+            
+            // 过滤掉系统消息，只返回用户和AI的消息
+            return messages.stream()
+                    .filter(message -> !(message instanceof SystemMessage))
+                    .map(message -> {
+                        try {
+                            if (message instanceof UserMessage) {
+                                return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
+                            } else if (message instanceof AiMessage) {
+                                return new SerializableChatMessage("AI", ((AiMessage) message).text());
+                            } else {
+                                return new SerializableChatMessage("UNKNOWN", message.toString());
+                            }
+                        } catch (Exception e) {
+                            log.error("序列化消息失败: {}", message, e);
+                            return new SerializableChatMessage("ERROR", "消息解析失败");
+                        }
+                    })
+                    .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.error("获取可序列化消息列表失败，sessionId: {}", sessionId, e);
+            throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
     }
 
     /**
      * 将langchain4j消息转换为数据库消息格式
      */
     private List<ChatMessage> convertToDbMessages(String sessionId, List<dev.langchain4j.data.message.ChatMessage> messages) {
-        return messages.stream().map(message -> {
-            ChatMessage dbMessage = new ChatMessage();
-            dbMessage.setSessionId(sessionId);
+        return messages.stream()
+                .filter(message -> !(message instanceof SystemMessage))
+                .map(message -> {
+                    try {
+                        ChatMessage dbMessage = new ChatMessage();
+                        dbMessage.setSessionId(sessionId);
 
-            // 根据不同消息类型获取内容
-            if (message instanceof UserMessage) {
-                String content = ((UserMessage) message).singleText();
-                // 确保内容不为空
-                dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
-                dbMessage.setMessageType("USER");
-            } else if (message instanceof AiMessage) {
-                String content = ((AiMessage) message).text();
-                dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
-                dbMessage.setMessageType("ASSISTANT");
-            } else if (message instanceof SystemMessage) {
-                String content = ((SystemMessage) message).text();
-                dbMessage.setContent(StringUtils.hasText(content) ? content : "系统消息");
-                dbMessage.setMessageType("SYSTEM");
-            } else {
-                // 对于未知类型的消息，确保内容不为空
-                String content = message.toString();
-                dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
-                dbMessage.setMessageType("USER");
-            }
+                        if (message instanceof UserMessage) {
+                            String content = ((UserMessage) message).singleText();
+                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
+                            dbMessage.setMessageType("USER");
+                        } else if (message instanceof AiMessage) {
+                            String content = ((AiMessage) message).text();
+                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
+                            dbMessage.setMessageType("ASSISTANT");
+                        } else {
+                            String content = message.toString();
+                            dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
+                            dbMessage.setMessageType("USER");
+                        }
 
-            dbMessage.setCreatedAt(LocalDateTime.now());
-            return dbMessage;
-        }).collect(Collectors.toList());
+                        dbMessage.setCreatedAt(LocalDateTime.now());
+                        return dbMessage;
+                    } catch (Exception e) {
+                        log.error("转换数据库消息失败: {}", message, e);
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
     }
 
     /**
-     * 可序列化的聊天消息DTO类
+     * 记录会话信息
      */
+    @Override
+    public void recordChatSession(String sessionId, Short characterType) {
+        try {
+            LambdaQueryWrapper<ChatSession> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(ChatSession::getSessionId, sessionId);
+            ChatSession existingSession = chatSessionMapper.selectOne(queryWrapper);
+
+            if (existingSession == null) {
+                ChatSession chatSession = new ChatSession();
+                chatSession.setSessionId(sessionId);
+                chatSession.setCharacterType(characterType);
+                chatSession.setCharacterName(getCharacterNameByType(characterType));
+                chatSession.setCreatedAt(LocalDateTime.now());
+                chatSession.setUpdatedAt(LocalDateTime.now());
+
+                chatSessionMapper.insert(chatSession);
+                log.info("已记录新会话: sessionId={}, characterType={}, characterName={}",
+                        sessionId, characterType, getCharacterNameByType(characterType));
+            } else {
+                if (!characterType.equals(existingSession.getCharacterType())) {
+                    existingSession.setCharacterType(characterType);
+                    existingSession.setCharacterName(getCharacterNameByType(characterType));
+                    existingSession.setUpdatedAt(LocalDateTime.now());
+
+                    chatSessionMapper.updateById(existingSession);
+                    log.info("已更新会话角色: sessionId={}, characterType={}, characterName={}",
+                            sessionId, characterType, getCharacterNameByType(characterType));
+                } else {
+                    log.debug("会话已存在且角色类型相同，无需更新: sessionId={}", sessionId);
+                }
+            }
+        } catch (Exception e) {
+            log.error("记录会话信息失败: sessionId={}, characterType={}", sessionId, characterType, e);
+        }
+    }
+
+    /**
+     * 根据角色类型获取角色名称
+     */
+    private String getCharacterNameByType(Short characterType) {
+        return switch (characterType) {
+            case 0 -> "宵宫";
+            case 1 -> "温迪";
+            case 2 -> "胡桃";
+            default -> {
+                log.warn("不支持的角色类型: {}, 使用默认名称", characterType);
+                yield "默认角色";
+            }
+        };
+    }
+
+    /**
+     * 可序列化的聊天消息类
+     */
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class SerializableChatMessage {
         private String type;
         private String content;
-
-        public SerializableChatMessage(String type, String content) {
-            this.type = type;
-            this.content = content;
-        }
-
-        public String getType() {
-            return type;
-        }
-
-        public String getContent() {
-            return content;
-        }
     }
 }
