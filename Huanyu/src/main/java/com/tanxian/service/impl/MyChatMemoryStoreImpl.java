@@ -64,10 +64,15 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     public void updateMessages(Object memoryId, List<dev.langchain4j.data.message.ChatMessage> messages) {
         log.info("更新会话消息，memoryId: {}, 消息数量: {}", memoryId, messages.size());
         
+        // 过滤掉系统消息，只保存用户和AI消息
+        List<dev.langchain4j.data.message.ChatMessage> filteredMessages = messages.stream()
+                .filter(message -> !(message instanceof SystemMessage))
+                .collect(Collectors.toList());
+        
         // 更新Redis，设置1天过期时间
-        String json = ChatMessageSerializer.messagesToJson(messages);
+        String json = ChatMessageSerializer.messagesToJson(filteredMessages);
         redisTemplate.opsForValue().set(memoryId.toString(), json, Duration.ofDays(1));
-        log.info("已更新Redis缓存");
+        log.info("已更新Redis缓存，过滤后消息数量: {}", filteredMessages.size());
         
         // 更新MySQL
         // 先删除该会话的所有消息
@@ -77,7 +82,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         log.info("已删除MySQL中的旧消息");
         
         // 再插入新的消息
-        List<ChatMessage> dbMessages = convertToDbMessages(memoryId.toString(), messages);
+        List<ChatMessage> dbMessages = convertToDbMessages(memoryId.toString(), filteredMessages);
         log.info("准备插入{}条新消息到MySQL", dbMessages.size());
         
         for (ChatMessage message : dbMessages) {
@@ -105,17 +110,18 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     @Override
     public List<SerializableChatMessage> getSerializableMessages(String sessionId) {
         List<dev.langchain4j.data.message.ChatMessage> messages = getMessages(sessionId);
-        return messages.stream().map(message -> {
-            if (message instanceof SystemMessage) {
-                return new SerializableChatMessage("SYSTEM", ((SystemMessage) message).text());
-            } else if (message instanceof UserMessage) {
-                return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
-            } else if (message instanceof AiMessage) {
-                return new SerializableChatMessage("AI", ((AiMessage) message).text());
-            } else {
-                return new SerializableChatMessage("UNKNOWN", message.toString());
-            }
-        }).collect(Collectors.toList());
+        // 过滤掉系统消息
+        return messages.stream()
+                .filter(message -> !(message instanceof SystemMessage))
+                .map(message -> {
+                    if (message instanceof UserMessage) {
+                        return new SerializableChatMessage("USER", ((UserMessage) message).singleText());
+                    } else if (message instanceof AiMessage) {
+                        return new SerializableChatMessage("AI", ((AiMessage) message).text());
+                    } else {
+                        return new SerializableChatMessage("UNKNOWN", message.toString());
+                    }
+                }).collect(Collectors.toList());
     }
     
     /**
