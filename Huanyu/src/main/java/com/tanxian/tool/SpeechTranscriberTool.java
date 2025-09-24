@@ -1,4 +1,4 @@
-package com.tanxian.demo;
+package com.tanxian.tool;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -11,6 +11,7 @@ import com.alibaba.nls.client.protocol.SampleRateEnum;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriber;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
+import com.tanxian.demo.SpeechTranscriberDemo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

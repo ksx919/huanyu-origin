@@ -56,10 +56,6 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue';
-// @ts-ignore
-import Recorder from 'recorder-core';
-// @ts-ignore
-import 'recorder-core/src/engine/pcm';
 
 // 类型定义
 interface ChatMessage {
@@ -76,7 +72,9 @@ const connectionStatus = ref<'disconnected' | 'connecting' | 'connected' | 'erro
 
 // WebSocket 和录音相关变量
 let socket: WebSocket | null = null;
-let rec: Recorder | null = null;
+let audioContext: AudioContext | null = null;
+let mediaStream: MediaStream | null = null;
+let audioWorkletNode: AudioWorkletNode | null = null;
 
 // 计算属性和辅助函数
 const connectionStatusText = computed(() => {
@@ -124,10 +122,11 @@ const connectWebSocket = () => {
   }
 
   connectionStatus.value = 'connecting';
-  const backendUrl = 'ws://localhost:8080/api/chat';
+  const backendUrl = 'ws://localhost:8000/ws-audio';
 
   try {
     socket = new WebSocket(backendUrl);
+    socket.binaryType = "arraybuffer"; // 重要：接收和发送二进制数据
 
     socket.onopen = () => {
       console.log('WebSocket 连接已建立');
@@ -177,7 +176,7 @@ const connectWebSocket = () => {
 };
 
 // 录音功能
-const startRecording = () => {
+const startRecording = async () => {
   if (!selectedCharacter.value) {
     alert('请先选择一个角色！');
     return;
@@ -190,78 +189,82 @@ const startRecording = () => {
 
   if (isRecording.value) return;
 
-  // 创建 Recorder 实例
-  rec = new Recorder({
-    type: 'pcm',
-    sampleRate: 16000,
-    bitRate: 16,
-    numChannels: 1
-  });
+  try {
+    // 1. 获取麦克风权限
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new AudioContext();
 
-  rec.open(() => {
-    console.log('录音器已打开，开始录音...');
-    rec?.start();
+    // 2. 加载AudioWorklet模块
+    await audioContext.audioWorklet.addModule('/audio-processor.js');
+
+    // 3. 创建音频处理图
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+    // 4. 连接音频节点
+    source.connect(audioWorkletNode);
+    audioWorkletNode.connect(audioContext.destination);
+
+    // 先发送角色信息
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({
+        type: 'character_select',
+        characterId: selectedCharacter.value
+      }));
+    }
+
+    // 5. 监听AudioWorklet发送的音频数据
+    audioWorkletNode.port.onmessage = (event) => {
+      if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(event.data.data); // 发送二进制 PCM 数据
+      }
+    };
+
     isRecording.value = true;
-  }, (msg: string) => {
-    console.error('录音器打开失败:', msg);
+    console.log('录音器已打开，开始录音...');
+
+    // 添加用户消息到对话记录
+    conversation.value.push({
+      role: 'user',
+      content: '（语音输入，等待识别...）',
+      timestamp: Date.now()
+    });
+
+  } catch (error) {
+    console.error('录音器打开失败:', error);
     alert('无法访问麦克风，请检查权限设置');
-  });
+  }
 };
 
 const stopRecording = () => {
-  if (!isRecording.value || !rec) return;
+  if (!isRecording.value) return;
 
-  rec.stop(async (blob: Blob) => {
-    console.log('录音结束，音频 Blob 大小:', blob.size, 'bytes');
-
-    try {
-      // 将 blob 转换为 ArrayBuffer，然后转为 16 位 PCM 字节数组
-      const arrayBuffer = await blob.arrayBuffer();
-      const pcmData = new Uint8Array(arrayBuffer);
-
-      console.log('PCM 数据长度:', pcmData.length, 'bytes');
-
-      // 发送数据到后端
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        // 先发送角色信息，然后发送音频数据
-        socket.send(JSON.stringify({
-          type: 'character_select',
-          characterId: selectedCharacter.value
-        }));
-
-        // 发送 PCM 字节数组
-        socket.send(pcmData.buffer);
-
-        // 添加用户消息到对话记录
-        conversation.value.push({
-          role: 'user',
-          content: '（语音输入，等待识别...）',
-          timestamp: Date.now()
-        });
-
-        console.log('角色信息和音频数据已发送到后端');
-      } else {
-        console.error('WebSocket 未连接，无法发送数据');
-        alert('连接已断开，请刷新页面重试');
-      }
-
-    } catch (error) {
-      console.error('处理 PCM 数据时出错:', error);
-      alert('处理录音数据失败，请重试');
+  try {
+    // 停止音频处理
+    if (audioWorkletNode) {
+      audioWorkletNode.disconnect();
+      audioWorkletNode = null;
     }
 
-    // 清理资源
-    rec?.close();
-    rec = null;
-    isRecording.value = false;
+    // 关闭音频上下文
+    if (audioContext) {
+      audioContext.close();
+      audioContext = null;
+    }
 
-  }, (err: any) => {
-    console.error('录音处理出错:', err);
-    alert('录音处理失败，请重试');
+    // 停止媒体流
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      mediaStream = null;
+    }
+
     isRecording.value = false;
-    rec?.close();
-    rec = null;
-  });
+    console.log('录音已停止');
+
+  } catch (error) {
+    console.error('停止录音时出错:', error);
+    isRecording.value = false;
+  }
 };
 
 // 生命周期管理
@@ -274,8 +277,16 @@ onUnmounted(() => {
   if (socket) {
     socket.close(1000, '用户离开页面');
   }
-  if (rec) {
-    rec.close();
+  
+  // 停止录音相关资源
+  if (audioWorkletNode) {
+    audioWorkletNode.disconnect();
+  }
+  if (audioContext) {
+    audioContext.close();
+  }
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
   }
 });
 </script>
