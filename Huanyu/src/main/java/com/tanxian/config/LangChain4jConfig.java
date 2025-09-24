@@ -13,7 +13,7 @@ public class LangChain4jConfig {
     public ChatMemoryProvider chatMemoryProvider(MyChatMemoryStore myChatMemoryStore) {
         return memoryId -> MessageWindowChatMemory.builder()
                 .id(memoryId)
-                .maxMessages(20)
+                .maxMessages(21)
                 .chatMemoryStore(myChatMemoryStore)
                 .build();
     }
