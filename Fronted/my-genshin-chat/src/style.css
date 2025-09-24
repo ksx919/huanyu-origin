@@ -23,6 +23,9 @@ a:hover {
 }
 
 body {
+  font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  overflow: hidden;
+  background: #000;
   margin: 0;
   display: flex;
   place-items: center;
@@ -76,4 +79,10 @@ button:focus-visible {
   button {
     background-color: #f9f9f9;
   }
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
