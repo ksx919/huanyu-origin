@@ -30,10 +30,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -231,7 +228,8 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             log.info("Redis中无数据，从MySQL查询");
             LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
             queryWrapper.eq(ChatMessage::getSessionId, sessionId)
-                    .orderByAsc(ChatMessage::getCreatedAt);
+                    .ne(ChatMessage::getMessageType, "SYSTEM")
+                    .orderByAsc(ChatMessage::getCreatedAt); // 按时间升序获取所有消息
             List<ChatMessage> dbMessages = chatMessageMapper.selectList(queryWrapper);
 
             if (dbMessages == null || dbMessages.isEmpty()) {
@@ -265,26 +263,15 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                     .filter(msg -> !(msg instanceof SystemMessage))
                     .collect(Collectors.toList());
 
+            // 更新Redis缓存（仅存储内存窗口内的消息）
             String redisKey = getRedisKey(sessionId);
             String json = ChatMessageSerializer.messagesToJson(nonSystemMessages);
             redisTemplate.opsForValue().set(redisKey, json, Duration.ofDays(1));
             log.info("已更新Redis缓存");
-
-            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
-            countWrapper.eq(ChatMessage::getSessionId, sessionId)
-                    .ne(ChatMessage::getMessageType, "SYSTEM");
-            long existingCount = chatMessageMapper.selectCount(countWrapper);
-
-            if (existingCount < nonSystemMessages.size()) {
-                List<ChatMessage> allDbMsgs = convertToDbMessages(sessionId, nonSystemMessages);
-                List<ChatMessage> newDbMsgs = allDbMsgs.subList((int) existingCount, allDbMsgs.size());
-                log.info("数据库已有 {} 条非系统消息，本次追加 {} 条", existingCount, newDbMsgs.size());
-                for (ChatMessage msg : newDbMsgs) {
-                    chatMessageMapper.insert(msg);
-                }
-            } else {
-                log.info("数据库记录已是最新，无需追加");
-            }
+            
+            // 完整存储所有消息到数据库（不受内存窗口限制）
+            storeAllMessagesToDatabase(sessionId, nonSystemMessages);
+            
         } catch (Exception e) {
             log.error("更新会话消息失败，sessionId: {}", sessionId, e);
         }
@@ -332,14 +319,19 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         for (ChatMessage dbMessage : dbMessages) {
             try {
                 if (!"SYSTEM".equals(dbMessage.getMessageType())) {
-                    dev.langchain4j.data.message.ChatMessage message = switch (dbMessage.getMessageType()) {
-                        case "ASSISTANT" -> new AiMessage(dbMessage.getContent());
-                        case "USER" -> new UserMessage(dbMessage.getContent());
-                        default -> {
+                    dev.langchain4j.data.message.ChatMessage message;
+                    switch (dbMessage.getMessageType()) {
+                        case "ASSISTANT":
+                            message = new AiMessage(dbMessage.getContent());
+                            break;
+                        case "USER":
+                            message = new UserMessage(dbMessage.getContent());
+                            break;
+                        default:
                             log.warn("未知消息类型: {}, 当作USER消息处理", dbMessage.getMessageType());
-                            yield new UserMessage(dbMessage.getContent());
-                        }
-                    };
+                            message = new UserMessage(dbMessage.getContent());
+                            break;
+                    }
                     result.add(message);
                 }
             } catch (Exception e) {
@@ -379,6 +371,167 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         } catch (Exception e) {
             log.error("获取可序列化消息列表失败，sessionId: {}", sessionId, e);
             throw new BusinessException(BusinessExceptionEnum.SYSTEM_MESSAGE_TEMPLATE_LOAD_FAILED);
+        }
+    }
+
+    /**
+     * 完整存储所有消息到数据库，不受内存窗口限制
+     * 这个方法会存储会话中的每一条消息，而不仅仅是内存窗口中的消息
+     */
+    private void storeAllMessagesToDatabase(String sessionId, List<dev.langchain4j.data.message.ChatMessage> currentWindowMessages) {
+        try {
+            // 获取数据库中已存在的消息数量
+            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM");
+            Long existingCount = chatMessageMapper.selectCount(countWrapper);
+            
+            log.info("会话 {} 数据库中已有 {} 条消息，当前内存窗口有 {} 条消息", sessionId, existingCount, currentWindowMessages.size());
+            
+            // 检查是否有新消息需要存储
+            // 由于LangChain4j的内存窗口限制，我们需要检测新增的消息
+            if (currentWindowMessages.size() > 0) {
+                // 获取当前窗口中的最后一条消息
+                dev.langchain4j.data.message.ChatMessage lastMessage = currentWindowMessages.get(currentWindowMessages.size() - 1);
+                
+                // 检查这条消息是否已经存在于数据库中
+                if (!isMessageExistsInDatabase(sessionId, lastMessage, existingCount)) {
+                    // 如果最后一条消息不存在，说明有新消息需要存储
+                    ChatMessage dbMessage = convertSingleMessageToDb(sessionId, lastMessage);
+                    if (dbMessage != null) {
+                        chatMessageMapper.insert(dbMessage);
+                        log.info("成功存储新消息到数据库: {} - {}", dbMessage.getMessageType(), 
+                                dbMessage.getContent().length() > 50 ? 
+                                dbMessage.getContent().substring(0, 50) + "..." : 
+                                dbMessage.getContent());
+                    }
+                } else {
+                    log.debug("消息已存在于数据库中，无需重复存储");
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("完整存储消息到数据库失败，sessionId: {}", sessionId, e);
+        }
+    }
+    
+    /**
+     * 检查消息是否已存在于数据库中
+     */
+    private boolean isMessageExistsInDatabase(String sessionId, dev.langchain4j.data.message.ChatMessage message, Long existingCount) {
+        try {
+            // 获取数据库中最后几条消息进行比较
+            LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM")
+                    .orderByDesc(ChatMessage::getCreatedAt)
+                    .last("LIMIT 5"); // 只检查最后5条消息
+            
+            List<ChatMessage> recentMessages = chatMessageMapper.selectList(queryWrapper);
+            
+            String messageContent = getMessageContent(message);
+            String messageType = getMessageType(message);
+            
+            // 检查是否有相同内容和类型的消息
+            return recentMessages.stream().anyMatch(dbMsg -> 
+                messageType.equals(dbMsg.getMessageType()) && 
+                messageContent.equals(dbMsg.getContent())
+            );
+            
+        } catch (Exception e) {
+            log.error("检查消息是否存在时发生错误", e);
+            return false;
+        }
+    }
+    
+    /**
+     * 将单条LangChain4j消息转换为数据库消息
+     */
+    private ChatMessage convertSingleMessageToDb(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            ChatMessage dbMessage = new ChatMessage();
+            dbMessage.setSessionId(sessionId);
+            
+            if (message instanceof UserMessage) {
+                String content = ((UserMessage) message).singleText();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
+                dbMessage.setMessageType("USER");
+            } else if (message instanceof AiMessage) {
+                String content = ((AiMessage) message).text();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
+                dbMessage.setMessageType("ASSISTANT");
+            } else {
+                String content = message.toString();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
+                dbMessage.setMessageType("USER");
+            }
+            
+            dbMessage.setCreatedAt(LocalDateTime.now());
+            return dbMessage;
+            
+        } catch (Exception e) {
+            log.error("转换单条消息失败: {}", message, e);
+            return null;
+        }
+    }
+    
+    /**
+     * 获取消息内容
+     */
+    private String getMessageContent(dev.langchain4j.data.message.ChatMessage message) {
+        if (message instanceof UserMessage) {
+            return ((UserMessage) message).singleText();
+        } else if (message instanceof AiMessage) {
+            return ((AiMessage) message).text();
+        } else {
+            return message.toString();
+        }
+    }
+    
+    /**
+     * 获取消息类型
+     */
+    private String getMessageType(dev.langchain4j.data.message.ChatMessage message) {
+        if (message instanceof UserMessage) {
+            return "USER";
+        } else if (message instanceof AiMessage) {
+            return "ASSISTANT";
+        } else {
+            return "USER";
+        }
+    }
+    private void insertNewMessagesOnly(String sessionId, List<dev.langchain4j.data.message.ChatMessage> newMessages) {
+        try {
+            // 获取数据库中已存在的消息数量
+            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM");
+            Long existingCount = chatMessageMapper.selectCount(countWrapper);
+            
+            log.info("会话 {} 数据库中已有 {} 条消息，新消息列表有 {} 条", sessionId, existingCount, newMessages.size());
+            
+            // 如果新消息数量大于已存在的消息数量，则插入差异部分
+            if (newMessages.size() > existingCount) {
+                List<dev.langchain4j.data.message.ChatMessage> messagesToInsert = 
+                    newMessages.subList(existingCount.intValue(), newMessages.size());
+                
+                List<ChatMessage> dbMessages = convertToDbMessages(sessionId, messagesToInsert);
+                
+                if (!dbMessages.isEmpty()) {
+                    // 逐条插入新消息（MyBatis-Plus BaseMapper没有批量插入方法）
+                    for (ChatMessage dbMessage : dbMessages) {
+                        chatMessageMapper.insert(dbMessage);
+                    }
+                    log.info("成功插入 {} 条新消息到数据库", dbMessages.size());
+                } else {
+                    log.info("没有新消息需要插入");
+                }
+            } else {
+                log.info("消息数量未增加，无需插入新消息");
+            }
+            
+        } catch (Exception e) {
+            log.error("增量插入消息失败，sessionId: {}", sessionId, e);
         }
     }
 
