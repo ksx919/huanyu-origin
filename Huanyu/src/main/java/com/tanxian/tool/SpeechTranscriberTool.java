@@ -3,6 +3,9 @@ package com.tanxian.tool;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.net.URI;
+import java.util.HashMap;
+import java.util.Map;
 
 import com.alibaba.nls.client.AccessToken;
 import com.alibaba.nls.client.protocol.InputFormatEnum;
@@ -11,10 +14,16 @@ import com.alibaba.nls.client.protocol.SampleRateEnum;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriber;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
-import com.tanxian.demo.SpeechTranscriberDemo;
+import com.tanxian.service.AiChatService;
+import com.tanxian.service.impl.AiChatServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+import reactor.core.publisher.Flux;
 
 /**
  * 此示例演示了：
@@ -25,15 +34,22 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class SpeechTranscriberTool {
+    @Autowired
+    AiChatService aiChatService;
     private String appKey,id,secret,url;
     private NlsClient client;
-    private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberDemo.class);
+    private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
+    public boolean isRecording;
+    public SpeechTranscriber transcriber;
+    public int cnt;
 
     public SpeechTranscriberTool() {
+        cnt=0;
         appKey ="eM6lol9cMryNdqfB";
         id = "LTAI5tQuhLijAPVnScpCKiPT";
         secret = "ELs3CmZ5mSsgNTmG1VJnoqrqcrTrgy";
         url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
+        isRecording=false;
         this.appKey = appKey;
         //应用全局创建一个NlsClient实例，默认服务地址为阿里云线上服务地址。
         //获取token，实际使用时注意在accessToken.getExpireTime()过期前再次获取。
@@ -51,7 +67,8 @@ public class SpeechTranscriberTool {
         }
     }
 
-    private static SpeechTranscriberListener getTranscriberListener() {
+    private SpeechTranscriberListener getTranscriberListener() {
+
         SpeechTranscriberListener listener = new SpeechTranscriberListener() {
             //识别出中间结果。仅当setEnableIntermediateResult为true时，才会返回该消息。
             @Override
@@ -67,6 +84,8 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
             }
+
+
 
             @Override
             public void onTranscriberStart(SpeechTranscriberResponse response) {
@@ -99,6 +118,14 @@ public class SpeechTranscriberTool {
                         ", time: " + response.getTransSentenceTime());
 
                 //发送句子到指定接口
+                String SessionId = "lwj520",message = response.getTransSentenceText();
+                short type = 2;
+                Flux<String> aiReplies = aiChatService.chat(SessionId,message,type);
+                aiReplies.subscribe(
+                        reply -> System.out.println("【AI回复】：" + reply), // onNext 事件（收到数据）
+                        error -> System.err.println("【错误】：" + error.getMessage()), // onError 事件（发生异常）
+                        () -> System.out.println("【流结束】") // onComplete 事件（流完成）
+                );
             }
 
             //识别完毕
@@ -128,7 +155,6 @@ public class SpeechTranscriberTool {
     }
 
     public void process(String filepath) {
-        SpeechTranscriber transcriber = null;
         try {
             //创建实例、建立连接。
             transcriber = new SpeechTranscriber(client, getTranscriberListener());
@@ -186,77 +212,68 @@ public class SpeechTranscriberTool {
         } catch (Exception e) {
             System.err.println(e.getMessage());
         } finally {
-            if (null != transcriber) {
-                transcriber.close();
-            }
+            transcriber.close();
         }
     }
 
     public void process(byte[] data) {
-        SpeechTranscriber transcriber = null;
         try {
-            //创建实例、建立连接。
-            transcriber = new SpeechTranscriber(client, getTranscriberListener());
-            transcriber.setAppKey(appKey);
-            //输入音频编码方式。
-            transcriber.setFormat(InputFormatEnum.PCM);
-            //输入音频采样率。
-            transcriber.setSampleRate(SampleRateEnum.SAMPLE_RATE_16K);
-            //是否返回中间识别结果。
-            transcriber.setEnableIntermediateResult(false);
-            //是否生成并返回标点符号。
-            transcriber.setEnablePunctuation(false);
-            //是否将返回结果规整化，比如将一百返回为100。
-            transcriber.setEnableITN(false);
+            if(!isRecording) {
+                isRecording = true;
+                //创建实例、建立连接。
+                transcriber = new SpeechTranscriber(client, getTranscriberListener());
+                transcriber.setAppKey(appKey);
+                //输入音频编码方式。
+                transcriber.setFormat(InputFormatEnum.PCM);
+                //输入音频采样率。
+                transcriber.setSampleRate(SampleRateEnum.SAMPLE_RATE_16K);
+                //是否返回中间识别结果。
+                transcriber.setEnableIntermediateResult(false);
+                //是否生成并返回标点符号。
+                transcriber.setEnablePunctuation(false);
+                //是否将返回结果规整化，比如将一百返回为100。
+                transcriber.setEnableITN(false);
 
-            //设置vad断句参数。默认值：800ms，有效值：200ms～6000ms。
-            //transcriber.addCustomedParam("max_sentence_silence", 600);
-            //设置是否语义断句。
-            //transcriber.addCustomedParam("enable_semantic_sentence_detection",false);
-            //设置是否开启过滤语气词，即声音顺滑。
-            //transcriber.addCustomedParam("disfluency",true);
-            //设置是否开启词模式。
-            //transcriber.addCustomedParam("enable_words",true);
-            //设置vad噪音阈值参数，参数取值为-1～+1，如-0.9、-0.8、0.2、0.9。
-            //取值越趋于-1，判定为语音的概率越大，亦即有可能更多噪声被当成语音被误识别。
-            //取值越趋于+1，判定为噪音的越多，亦即有可能更多语音段被当成噪音被拒绝识别。
-            //该参数属高级参数，调整需慎重和重点测试。
-            //transcriber.addCustomedParam("speech_noise_threshold",0.3);
-            //设置训练后的定制语言模型id。
-            //transcriber.addCustomedParam("customization_id","你的定制语言模型id");
-            //设置训练后的定制热词id。
-            //transcriber.addCustomedParam("vocabulary_id","你的定制热词id");
+                //设置vad断句参数。默认值：800ms，有效值：200ms～6000ms。
+                //transcriber.addCustomedParam("max_sentence_silence", 600);
+                //设置是否语义断句。
+                //transcriber.addCustomedParam("enable_semantic_sentence_detection",false);
+                //设置是否开启过滤语气词，即声音顺滑。
+                //transcriber.addCustomedParam("disfluency",true);
+                //设置是否开启词模式。
+                //transcriber.addCustomedParam("enable_words",true);
+                //设置vad噪音阈值参数，参数取值为-1～+1，如-0.9、-0.8、0.2、0.9。
+                //取值越趋于-1，判定为语音的概率越大，亦即有可能更多噪声被当成语音被误识别。
+                //取值越趋于+1，判定为噪音的越多，亦即有可能更多语音段被当成噪音被拒绝识别。
+                //该参数属高级参数，调整需慎重和重点测试。
+                //transcriber.addCustomedParam("speech_noise_threshold",0.3);
+                //设置训练后的定制语言模型id。
+                //transcriber.addCustomedParam("customization_id","你的定制语言模型id");
+                //设置训练后的定制热词id。
+                //transcriber.addCustomedParam("vocabulary_id","你的定制热词id");
 
-            //此方法将以上参数设置序列化为JSON发送给服务端，并等待服务端确认。
-            transcriber.start();
-            logger.info("send data pack length: " + data.length);
-            transcriber.send(data, data.length);
+                //此方法将以上参数设置序列化为JSON发送给服务端，并等待服务端确认。
+                transcriber.start();
+            }
+            byte[] b = data;
+            int len = b.length;
+            logger.info("send data pack length: " + len);
+            transcriber.send(b, len);
             //本案例用读取本地文件的形式模拟实时获取语音流并发送的，因为读取速度较快，这里需要设置sleep。
             //如果实时获取语音则无需设置sleep, 如果是8k采样率语音第二个参数设置为8000。
-            int deltaSleep = getSleepDelta(data.length, 16000);
+//            int deltaSleep = getSleepDelta(len, 16000);
+//            Thread.sleep(deltaSleep);
 
             //通知服务端语音数据发送完毕，等待服务端处理完成。
-            long now = System.currentTimeMillis();
-            logger.info("ASR wait for complete");
-            transcriber.stop();
-            logger.info("ASR latency : " + (System.currentTimeMillis() - now) + " ms");
         } catch (Exception e) {
             System.err.println(e.getMessage());
         } finally {
-            if (null != transcriber) {
-                transcriber.close();
-            }
+
         }
     }
 
-    public void shutdown() {
+    public void shutdown() throws Exception {
         client.shutdown();
     }
 
-    public static void main(String[] args) throws Exception {
-        String filepath = "C:\\Users\\77382\\Desktop\\speaktest\\output.pcm";
-        SpeechTranscriberTool demo = new SpeechTranscriberTool();
-        demo.process(filepath);
-        demo.shutdown();
-    }
 }

@@ -277,7 +277,7 @@ onUnmounted(() => {
   if (socket) {
     socket.close(1000, '用户离开页面');
   }
-  
+
   // 停止录音相关资源
   if (audioWorkletNode) {
     audioWorkletNode.disconnect();
