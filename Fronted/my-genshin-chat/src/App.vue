@@ -84,6 +84,14 @@ interface ChatMessage {
   timestamp?: number;
 }
 
+const AUDIO_CONFIG = {
+  sampleRate: 16000,    // 采样率16kHz
+  bitDepth: 16,         // 位深16bit
+  channels: 1,          // 单声道
+  chunkSize: 3200       // 每块PCM数据大小
+};
+
+
 const characters = ref([
   { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' },
   { id: 'Venti', name: '温迪', avatar: 'https://i.imgur.com/Qh15D0G.png' },
@@ -174,6 +182,25 @@ const deselectCharacter = () => {
   }
 };
 
+const processAudioData = (inputData: Float32Array) => {
+
+  const int16Data = new Int16Array(inputData.length);
+  for (let i = 0; i < inputData.length; i++) {
+    int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32767));
+  }
+
+  const uint8Data = new Uint8Array(int16Data.buffer);
+
+  for (let offset = 0; offset < uint8Data.length; offset += AUDIO_CONFIG.chunkSize) {
+    const end = Math.min(offset + AUDIO_CONFIG.chunkSize, uint8Data.length);
+    const chunk = uint8Data.subarray(offset, end);
+
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      socket.send(chunk);
+    }
+  }
+};
+
 // 录音功能
 const startRecording = async () => {
   if (!selectedCharacter.value || isRecording.value || connectionStatus.value !== 'connected') {
@@ -186,20 +213,42 @@ const startRecording = async () => {
   }
 
   try {
-    // 获取麦克风权限并设置音频处理
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new AudioContext();
-    await audioContext.audioWorklet.addModule('/audio-processor.js');
-
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-    source.connect(audioWorkletNode).connect(audioContext.destination);
-
-    // 设置音频数据传输
-    audioWorkletNode.port.onmessage = (event) => {
-      if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(event.data.data);
+    // 获取麦克风权限 - 指定音频参数
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: AUDIO_CONFIG.sampleRate,
+        channelCount: AUDIO_CONFIG.channels,
+        echoCancellation: true,
+        noiseSuppression: true
       }
+    });
+
+    // 创建AudioContext - 强制指定采样率
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+      sampleRate: AUDIO_CONFIG.sampleRate
+    });
+
+    // 创建ScriptProcessorNode
+    scriptProcessor = audioContext.createScriptProcessor(
+        4096, // 缓冲区大小
+        AUDIO_CONFIG.channels,
+        AUDIO_CONFIG.channels
+    );
+
+    // 连接音频流
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    source.connect(scriptProcessor);
+    scriptProcessor.connect(audioContext.destination);
+
+    // 处理音频数据 - 关键部分
+    scriptProcessor.onaudioprocess = (event) => {
+      if (!isRecording.value) return;
+
+      // 获取原始音频数据
+      const inputData = event.inputBuffer.getChannelData(0);
+
+      // 处理并发送音频数据
+      processAudioData(inputData);
     };
 
     isRecording.value = true;
@@ -209,6 +258,12 @@ const startRecording = async () => {
       role: 'user',
       content: '（语音输入，等待识别...）',
       timestamp: Date.now()
+    });
+
+    console.log('录音已开始，音频参数:', {
+      sampleRate: audioContext.sampleRate,
+      channels: AUDIO_CONFIG.channels,
+      chunkSize: AUDIO_CONFIG.chunkSize
     });
 
   } catch (error) {
@@ -225,20 +280,22 @@ const stopRecording = () => {
 
   try {
     // 清理音频资源
-    if (audioWorkletNode) {
-      audioWorkletNode.disconnect();
-      audioWorkletNode = null;
+    if (scriptProcessor) {
+      scriptProcessor.disconnect();
+      scriptProcessor = null;
     }
-    if (audioContext) {
-      audioContext.close();
-      audioContext = null;
-    }
+
     if (mediaStream) {
       mediaStream.getTracks().forEach(track => track.stop());
       mediaStream = null;
     }
 
-    // 发送停止录音信号（如果需要）
+    if (audioContext && audioContext.state !== 'closed') {
+      audioContext.close();
+      audioContext = null;
+    }
+
+    // 发送停止录音信号
     if (socket && socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({
         type: 'stop_recording'
@@ -312,9 +369,8 @@ const getRecordButtonText = () => {
 
 // 生命周期管理
 onMounted(() => {
-  // 组件挂载时可以进行一些初始化操作
+  console.log('Vue组件已挂载，音频配置:', AUDIO_CONFIG);
 });
-
 onUnmounted(() => {
   // 清理资源
   stopRecording();
