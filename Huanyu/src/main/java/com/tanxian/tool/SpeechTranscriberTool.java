@@ -119,7 +119,7 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
-                //发送句子到指定接口
+                //Mark:SessionId and type must receive from front
                 String SessionId = "lwj520",message = response.getTransSentenceText();
                 short type = 2;
                 Flux<String> aiReplies = aiChatService.chat(SessionId,message,type);
