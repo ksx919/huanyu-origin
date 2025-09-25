@@ -74,7 +74,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import gsap from 'gsap';
 
 // 类型定义
@@ -83,14 +83,6 @@ interface ChatMessage {
   content: string;
   timestamp?: number;
 }
-
-// 音频配置 - 与HTML版本保持一致
-const AUDIO_CONFIG = {
-  sampleRate: 16000,    // 采样率16kHz
-  bitDepth: 16,         // 位深16bit
-  channels: 1,          // 单声道
-  chunkSize: 3200       // 每块PCM数据大小
-};
 
 const characters = ref([
   { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' },
@@ -110,65 +102,74 @@ let audioContext: AudioContext | null = null;
 let mediaStream: MediaStream | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
 
-// WebSocket 连接函数
+// WebSocket 连接函数 (返回 Promise)
 const connectWebSocket = () => {
-  if (socket && (socket.readyState === WebSocket.CONNECTING || socket.readyState === WebSocket.OPEN)) {
-    console.log('WebSocket 已经连接或正在连接');
-    return;
-  }
-
-  connectionStatus.value = 'connecting';
-  const backendUrl = 'ws://localhost:8000/ws-audio';
-  socket = new WebSocket(backendUrl);
-  socket.binaryType = "arraybuffer";
-
-  socket.onopen = () => {
-    console.log('WebSocket 连接已建立');
-    connectionStatus.value = 'connected';
-
-    // 发送角色选择信息
-    if (selectedCharacter.value) {
-      socket!.send(JSON.stringify({
-        type: 'character_select',
-        characterId: selectedCharacter.value
-      }));
-    }
-  };
-
-  socket.onmessage = (event) => {
-    console.log('收到后端回复:', event.data);
-
-    // 更新用户消息为已识别状态
-    if (conversation.value.length > 0 && conversation.value[conversation.value.length - 1].role === 'user') {
-      if (conversation.value[conversation.value.length - 1].content === '（语音输入，等待识别...）') {
-        conversation.value[conversation.value.length - 1].content = '（语音输入已识别）';
-      }
+  return new Promise<void>((resolve, reject) => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      resolve();
+      return;
     }
 
-    // 添加AI回复
-    conversation.value.push({
-      role: 'ai',
-      content: event.data,
-      timestamp: Date.now()
-    });
-  };
+    connectionStatus.value = 'connecting';
+    const backendUrl = 'ws://localhost:8000/ws-audio';
 
-  socket.onerror = (error) => {
-    console.error('WebSocket 错误:', error);
-    connectionStatus.value = 'error';
-  };
+    try {
+      socket = new WebSocket(backendUrl);
+      socket.binaryType = "arraybuffer";
 
-  socket.onclose = (event) => {
-    console.log('WebSocket 连接已关闭', event.code, event.reason);
-    connectionStatus.value = 'disconnected';
-    socket = null;
-  };
+      socket.onopen = () => {
+        console.log('WebSocket 连接已建立');
+        connectionStatus.value = 'connected';
+
+        if (selectedCharacter.value) {
+          socket!.send(JSON.stringify({
+            type: 'character_select',
+            characterId: selectedCharacter.value
+          }));
+        }
+        resolve();
+      };
+
+      socket.onmessage = (event) => {
+        if (conversation.value.length > 0 && conversation.value[conversation.value.length - 1].role === 'user') {
+          if (conversation.value[conversation.value.length - 1].content === '（语音输入，等待识别...）') {
+            conversation.value[conversation.value.length - 1].content = '（语音输入已识别）';
+          }
+        }
+        conversation.value.push({
+          role: 'ai',
+          content: event.data,
+          timestamp: Date.now()
+        });
+      };
+
+      socket.onerror = (error) => {
+        console.error('WebSocket 错误:', error);
+        connectionStatus.value = 'error';
+        reject(error);
+      };
+
+      socket.onclose = (event) => {
+        console.log('WebSocket 连接已关闭', event.code, event.reason);
+        if (connectionStatus.value === 'connecting') {
+          reject(new Error(`连接关闭，请检查后端服务是否开启。 Code: ${event.code}`));
+        }
+        connectionStatus.value = 'disconnected';
+        socket = null;
+      };
+    } catch (error) {
+      console.error('创建 WebSocket 失败:', error);
+      connectionStatus.value = 'error';
+      reject(error);
+    }
+  });
 };
 
 // 角色选择逻辑
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
+  // 此处不再连接
 };
 
 const deselectCharacter = () => {
@@ -179,25 +180,18 @@ const deselectCharacter = () => {
   }
 };
 
-
 const startRecording = async () => {
   if (isRecording.value) return;
 
   try {
-    // 1. 建立新的 WebSocket 连接
+    // 1. 在录音开始时建立新连接，并等待成功
     await connectWebSocket();
 
-    // 检查连接是否真的成功
-    if (connectionStatus.value !== 'connected') {
-      console.error("无法开始录音，WebSocket 连接失败");
-      return;
-    }
+    isRecording.value = true;
 
-    // 2. 获取麦克风和设置 AudioWorklet (这部分逻辑不变)
-    isRecording.value = true; // 放在前面，防止重复点击
-
-    mediaStream = await navigator.mediaDevices.getUserMedia({ /* ... */ });
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ /* ... */ });
+    // 2. 获取麦克风和设置 AudioWorklet
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
     await audioContext.audioWorklet.addModule('/audio-processor.js');
     audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
     const source = audioContext.createMediaStreamSource(mediaStream);
@@ -218,19 +212,18 @@ const startRecording = async () => {
     console.log('录音已开始');
 
   } catch (error) {
-    console.error('音频处理或WebSocket连接启动失败:', error);
+    console.error('录音或连接失败:', error);
     alert('无法访问麦克风或连接服务器，请检查权限和网络');
-    stopRecording(); // 失败时清理资源
+    stopRecording();
   }
 };
 
 const stopRecording = () => {
-  if (!isRecording.value) return;
+  if (!isRecording.value && !mediaStream) return;
 
   isRecording.value = false;
 
   try {
-    // 清理音频资源 (逻辑不变)
     if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
     if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
     if (audioContext && audioContext.state !== 'closed') { audioContext.close(); audioContext = null; }
@@ -239,87 +232,41 @@ const stopRecording = () => {
 
     // 3. 关闭 WebSocket 连接
     if (socket && socket.readyState === WebSocket.OPEN) {
-      // (可选) 发送一个结束信号，但更重要的是关闭连接
-      socket.send(JSON.stringify({ type: 'stop_recording' }));
-      // 延迟一小会儿再关闭，确保stop信号能发出去
       setTimeout(() => {
         if(socket) socket.close(1000, '录音结束');
       }, 100);
-    } else {
-      console.log('录音停止，但socket未连接或已关闭');
     }
   } catch (error) {
     console.error('停止录音时出错:', error);
   }
 };
-// 动画函数
-const beforeTitleEnter = (el: Element) => {
-  (el as HTMLElement).style.opacity = '0';
-  (el as HTMLElement).style.transform = 'translateY(-30px)';
-};
 
-const enterTitle = (el: Element, done: () => void) => {
-  gsap.to(el, {
-    opacity: 1,
-    y: 0,
-    duration: 0.8,
-    ease: 'power3.out',
-    onComplete: done
-  });
-};
-
-const beforeCharEnter = (el: Element) => {
-  (el as HTMLElement).style.opacity = '0';
-  (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)';
-};
-
+// 动画函数 (这部分没变)
+const beforeTitleEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(-30px)'; };
+const enterTitle = (el: Element, done: () => void) => { gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', onComplete: done }); };
+const beforeCharEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)'; };
 const enterChar = (el: Element, done: () => void) => {
   const index = parseInt((el as HTMLElement).dataset.index || '0');
-  gsap.to(el, {
-    opacity: 1,
-    y: 0,
-    scale: 1,
-    duration: 0.6,
-    delay: index * 0.15 + 0.5,
-    ease: 'power2.out',
-    onComplete: done
-  });
+  gsap.to(el, { opacity: 1, y: 0, scale: 1, duration: 0.6, delay: index * 0.15 + 0.5, ease: 'power2.out', onComplete: done });
 };
 
 // 计算属性和辅助函数
-const connectionStatusText = computed(() => {
-  const statusMap = {
-    'disconnected': '未连接',
-    'connecting': '连接中...',
-    'connected': '已连接',
-    'error': '连接错误'
-  };
-  return statusMap[connectionStatus.value];
-});
-
 const getCharacterName = (char: string | null) => {
   return characters.value.find(c => c.id === char)?.name || '未知角色';
 };
 
 const getRecordButtonText = () => {
-  if (!selectedCharacter.value) return '请先选择角色';
   if (connectionStatus.value === 'connecting') return '正在连接...';
-  if (connectionStatus.value === 'error') return '连接失败';
-  if (connectionStatus.value === 'disconnected') return '未连接';
+  if (connectionStatus.value === 'error') return '连接失败, 点击重试';
   if (isRecording.value) return '正在录音... (松开停止)';
   return '按住说话';
 };
 
 // 生命周期管理
-onMounted(() => {
-  console.log('Vue组件已挂载，音频配置:', AUDIO_CONFIG);
-});
-
 onUnmounted(() => {
   stopRecording();
   if (socket) {
     socket.close(1000, '用户离开页面');
-    socket = null;
   }
 });
 </script>
