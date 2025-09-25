@@ -1,46 +1,35 @@
+// audio-processor.js - 放在 public 目录下
 class AudioProcessor extends AudioWorkletProcessor {
     constructor() {
         super();
-        this.bufferSize = 4096;
-        this.buffer = new Float32Array(this.bufferSize);
-        this.bufferIndex = 0;
-    }
-
-    // Float32Array -> Int16Array (16-bit PCM) 转换函数
-    floatTo16BitPCM(input) {
-        const output = new Int16Array(input.length);
-        for (let i = 0; i < input.length; i++) {
-            const s = Math.max(-1, Math.min(1, input[i]));
-            output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        return output;
+        this.chunkSize = 3200; // 与后端期望的PCM块大小一致
     }
 
     process(inputs, outputs, parameters) {
         const input = inputs[0];
 
-        if (input.length > 0) {
-            const inputChannel = input[0]; // 获取第一个声道
+        if (input && input[0]) {
+            const inputData = input[0]; // Float32Array
 
-            // 将数据添加到缓冲区
-            for (let i = 0; i < inputChannel.length; i++) {
-                this.buffer[this.bufferIndex] = inputChannel[i];
-                this.bufferIndex++;
+            // 转换 Float32 → Int16
+            const int16Data = new Int16Array(inputData.length);
+            for (let i = 0; i < inputData.length; i++) {
+                int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32767));
+            }
 
-                // 当缓冲区满时，发送数据
-                if (this.bufferIndex >= this.bufferSize) {
-                    // 转换为16位PCM
-                    const int16Pcm = this.floatTo16BitPCM(this.buffer);
+            // 转换为 Uint8Array
+            const uint8Data = new Uint8Array(int16Data.buffer);
 
-                    // 发送到主线程
-                    this.port.postMessage({
-                        type: 'audioData',
-                        data: int16Pcm.buffer
-                    });
+            // 分块发送
+            for (let offset = 0; offset < uint8Data.length; offset += this.chunkSize) {
+                const end = Math.min(offset + this.chunkSize, uint8Data.length);
+                const chunk = uint8Data.subarray(offset, end);
 
-                    // 重置缓冲区
-                    this.bufferIndex = 0;
-                }
+                // 发送数据到主线程
+                this.port.postMessage({
+                    type: 'audioData',
+                    data: chunk
+                });
             }
         }
 
