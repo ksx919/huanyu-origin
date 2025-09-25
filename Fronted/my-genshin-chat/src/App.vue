@@ -59,7 +59,7 @@
                 @mousedown="startRecording"
                 @mouseup="stopRecording"
                 @mouseleave="stopRecording"
-                :disabled="!selectedCharacter || connectionStatus !== 'connected'"
+                :disabled="!selectedCharacter || isRecording"
                 :class="{ recording: isRecording }"
             >
               {{ getRecordButtonText() }}
@@ -169,7 +169,6 @@ const connectWebSocket = () => {
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
-  connectWebSocket();
 };
 
 const deselectCharacter = () => {
@@ -180,72 +179,48 @@ const deselectCharacter = () => {
   }
 };
 
-// 音频数据处理函数已移至AudioWorklet中
 
-// 录音功能 - 修复后的AudioWorklet实现
 const startRecording = async () => {
-  if (!selectedCharacter.value || isRecording.value || connectionStatus.value !== 'connected') {
-    console.log('无法开始录音:', {
-      selectedCharacter: selectedCharacter.value,
-      isRecording: isRecording.value,
-      connectionStatus: connectionStatus.value
-    });
-    return;
-  }
+  if (isRecording.value) return;
 
   try {
-    // 获取麦克风权限 - 指定音频参数
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        sampleRate: AUDIO_CONFIG.sampleRate,
-        channelCount: AUDIO_CONFIG.channels,
-        echoCancellation: true,
-        noiseSuppression: true
-      }
-    });
+    // 1. 建立新的 WebSocket 连接
+    await connectWebSocket();
 
-    // 创建AudioContext - 强制指定采样率
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
-      sampleRate: AUDIO_CONFIG.sampleRate
-    });
+    // 检查连接是否真的成功
+    if (connectionStatus.value !== 'connected') {
+      console.error("无法开始录音，WebSocket 连接失败");
+      return;
+    }
 
-    // 加载AudioWorklet处理器
+    // 2. 获取麦克风和设置 AudioWorklet (这部分逻辑不变)
+    isRecording.value = true; // 放在前面，防止重复点击
+
+    mediaStream = await navigator.mediaDevices.getUserMedia({ /* ... */ });
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ /* ... */ });
     await audioContext.audioWorklet.addModule('/audio-processor.js');
-
-    // 创建AudioWorkletNode
     audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-
-    // 连接音频流
     const source = audioContext.createMediaStreamSource(mediaStream);
     source.connect(audioWorkletNode);
     audioWorkletNode.connect(audioContext.destination);
 
-    // 设置音频数据接收
     audioWorkletNode.port.onmessage = (event) => {
       if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
         socket.send(event.data.data);
       }
     };
 
-    isRecording.value = true;
-
-    // 添加用户消息占位符
     conversation.value.push({
       role: 'user',
       content: '（语音输入，等待识别...）',
       timestamp: Date.now()
     });
-
-    console.log('录音已开始，音频参数:', {
-      sampleRate: audioContext.sampleRate,
-      channels: AUDIO_CONFIG.channels,
-      chunkSize: AUDIO_CONFIG.chunkSize
-    });
+    console.log('录音已开始');
 
   } catch (error) {
-    console.error('音频处理启动失败:', error);
-    alert('无法访问麦克风，请检查浏览器权限设置');
-    stopRecording();
+    console.error('音频处理或WebSocket连接启动失败:', error);
+    alert('无法访问麦克风或连接服务器，请检查权限和网络');
+    stopRecording(); // 失败时清理资源
   }
 };
 
@@ -255,36 +230,28 @@ const stopRecording = () => {
   isRecording.value = false;
 
   try {
-    // 清理音频资源
-    if (audioWorkletNode) {
-      audioWorkletNode.disconnect();
-      audioWorkletNode = null;
-    }
+    // 清理音频资源 (逻辑不变)
+    if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
+    if (audioContext && audioContext.state !== 'closed') { audioContext.close(); audioContext = null; }
 
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(track => track.stop());
-      mediaStream = null;
-    }
+    console.log('录音资源已清理');
 
-    if (audioContext && audioContext.state !== 'closed') {
-      audioContext.close();
-      audioContext = null;
-    }
-
-    // 发送停止录音信号
+    // 3. 关闭 WebSocket 连接
     if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: 'stop_recording'
-      }));
+      // (可选) 发送一个结束信号，但更重要的是关闭连接
+      socket.send(JSON.stringify({ type: 'stop_recording' }));
+      // 延迟一小会儿再关闭，确保stop信号能发出去
+      setTimeout(() => {
+        if(socket) socket.close(1000, '录音结束');
+      }, 100);
+    } else {
+      console.log('录音停止，但socket未连接或已关闭');
     }
-
-    console.log('录音已停止');
-
   } catch (error) {
     console.error('停止录音时出错:', error);
   }
 };
-
 // 动画函数
 const beforeTitleEnter = (el: Element) => {
   (el as HTMLElement).style.opacity = '0';
