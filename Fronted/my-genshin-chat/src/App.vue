@@ -84,13 +84,13 @@ interface ChatMessage {
   timestamp?: number;
 }
 
+// 音频配置 - 与HTML版本保持一致
 const AUDIO_CONFIG = {
   sampleRate: 16000,    // 采样率16kHz
   bitDepth: 16,         // 位深16bit
   channels: 1,          // 单声道
   chunkSize: 3200       // 每块PCM数据大小
 };
-
 
 const characters = ref([
   { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' },
@@ -169,39 +169,20 @@ const connectWebSocket = () => {
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
-  // 选择角色后立即建立WebSocket连接
   connectWebSocket();
 };
 
 const deselectCharacter = () => {
   selectedCharacter.value = null;
   conversation.value = [];
-  // 断开WebSocket连接
   if (socket && socket.readyState === WebSocket.OPEN) {
     socket.close(1000, '用户返回选择界面');
   }
 };
 
-const processAudioData = (inputData: Float32Array) => {
+// 音频数据处理函数已移至AudioWorklet中
 
-  const int16Data = new Int16Array(inputData.length);
-  for (let i = 0; i < inputData.length; i++) {
-    int16Data[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32767));
-  }
-
-  const uint8Data = new Uint8Array(int16Data.buffer);
-
-  for (let offset = 0; offset < uint8Data.length; offset += AUDIO_CONFIG.chunkSize) {
-    const end = Math.min(offset + AUDIO_CONFIG.chunkSize, uint8Data.length);
-    const chunk = uint8Data.subarray(offset, end);
-
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(chunk);
-    }
-  }
-};
-
-// 录音功能
+// 录音功能 - 修复后的AudioWorklet实现
 const startRecording = async () => {
   if (!selectedCharacter.value || isRecording.value || connectionStatus.value !== 'connected') {
     console.log('无法开始录音:', {
@@ -228,27 +209,22 @@ const startRecording = async () => {
       sampleRate: AUDIO_CONFIG.sampleRate
     });
 
-    // 创建ScriptProcessorNode
-    scriptProcessor = audioContext.createScriptProcessor(
-        4096, // 缓冲区大小
-        AUDIO_CONFIG.channels,
-        AUDIO_CONFIG.channels
-    );
+    // 加载AudioWorklet处理器
+    await audioContext.audioWorklet.addModule('/audio-processor.js');
+
+    // 创建AudioWorkletNode
+    audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
 
     // 连接音频流
     const source = audioContext.createMediaStreamSource(mediaStream);
-    source.connect(scriptProcessor);
-    scriptProcessor.connect(audioContext.destination);
+    source.connect(audioWorkletNode);
+    audioWorkletNode.connect(audioContext.destination);
 
-    // 处理音频数据 - 关键部分
-    scriptProcessor.onaudioprocess = (event) => {
-      if (!isRecording.value) return;
-
-      // 获取原始音频数据
-      const inputData = event.inputBuffer.getChannelData(0);
-
-      // 处理并发送音频数据
-      processAudioData(inputData);
+    // 设置音频数据接收
+    audioWorkletNode.port.onmessage = (event) => {
+      if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(event.data.data);
+      }
     };
 
     isRecording.value = true;
@@ -280,9 +256,9 @@ const stopRecording = () => {
 
   try {
     // 清理音频资源
-    if (scriptProcessor) {
-      scriptProcessor.disconnect();
-      scriptProcessor = null;
+    if (audioWorkletNode) {
+      audioWorkletNode.disconnect();
+      audioWorkletNode = null;
     }
 
     if (mediaStream) {
@@ -371,8 +347,8 @@ const getRecordButtonText = () => {
 onMounted(() => {
   console.log('Vue组件已挂载，音频配置:', AUDIO_CONFIG);
 });
+
 onUnmounted(() => {
-  // 清理资源
   stopRecording();
   if (socket) {
     socket.close(1000, '用户离开页面');
