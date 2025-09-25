@@ -10,7 +10,7 @@
 
     <div v-if="!selectedCharacter" class="selection-screen">
       <transition appear @before-enter="beforeTitleEnter" @enter="enterTitle">
-        <h1>选择你的对话伙伴</h1>
+        <h1>选择你的对话对象</h1>
       </transition>
 
       <TransitionGroup
