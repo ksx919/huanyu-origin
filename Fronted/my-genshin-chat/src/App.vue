@@ -85,9 +85,9 @@ interface ChatMessage {
 }
 
 const characters = ref([
-  { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' },
-  { id: 'Venti', name: '温迪', avatar: 'https://i.imgur.com/Qh15D0G.png' },
-  { id: 'Xiaogong', name: '宵宫', avatar: 'https://i.imgur.com/C4B3tA4.png' }
+  { id: 'Hutao', name: '胡桃', avatar: '/Hutao.jpg' },
+  { id: 'Venti', name: '温迪', avatar: '/Venti.jpg' },
+  { id: 'Xiaogong', name: '宵宫', avatar: '/Xiaogong.jpg' }
 ]);
 
 // 响应式数据
@@ -298,10 +298,10 @@ body {
 .background-image {
   width: 100%;
   height: 100%;
-  background-image: url('https://i.imgur.com/example-bg.jpg');
+  background-image: url('/background1.jpg');
   background-size: cover;
   background-position: center;
-  filter: blur(10px) brightness(0.7);
+  filter: blur(3px) brightness(0.7);
   transform: scale(1.1);
 }
 
