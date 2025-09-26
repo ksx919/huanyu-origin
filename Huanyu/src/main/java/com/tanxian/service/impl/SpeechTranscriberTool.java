@@ -33,6 +33,7 @@ public class SpeechTranscriberTool {
     AiChatService aiChatService;
     @Autowired
     SendToAiTool sendToAiTool;
+
     private String appKey,id,secret,url,sessionId;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
@@ -207,6 +208,7 @@ public class SpeechTranscriberTool {
             transcriber.close();
         }
     }
+
 
     public void process(byte[] data,String sessionId) {
         try {
