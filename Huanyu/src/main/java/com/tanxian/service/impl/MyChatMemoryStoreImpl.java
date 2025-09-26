@@ -166,15 +166,17 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
         }
 
-        return switch (characterType) {
-            case 0 -> "yoimiya";
-            case 1 -> "venti";
-            case 2 -> "hutao";
-            default -> {
+        switch (characterType) {
+            case 0:
+                return "yoimiya";
+            case 1:
+                return "venti";
+            case 2:
+                return "hutao";
+            default:
                 log.error("不支持的角色类型: {}", characterType);
                 throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
-            }
-        };
+        }
     }
 
     /**
@@ -614,15 +616,17 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
      * 根据角色类型获取角色名称
      */
     private String getCharacterNameByType(Short characterType) {
-        return switch (characterType) {
-            case 0 -> "宵宫";
-            case 1 -> "温迪";
-            case 2 -> "胡桃";
-            default -> {
+        switch (characterType) {
+            case 0:
+                return "宵宫";
+            case 1:
+                return "温迪";
+            case 2:
+                return "胡桃";
+            default:
                 log.warn("不支持的角色类型: {}, 使用默认名称", characterType);
-                yield "默认角色";
-            }
-        };
+                return "默认角色";
+        }
     }
 
     /**

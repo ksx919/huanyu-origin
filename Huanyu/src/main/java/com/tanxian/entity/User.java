@@ -1,31 +1,35 @@
 package com.tanxian.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
-import lombok.AllArgsConstructor;
+
 import java.time.LocalDateTime;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-@TableName("chat_sessions")
-public class ChatSession {
+@TableName("users")
+public class User {
 
     @TableId(type = IdType.AUTO)
-    private Long id;
+    Long id;
 
-    @TableField("user_id")
-    private Long userId;
+    @TableField(value = "email")
+    String email;
 
-    @TableField("session_id")
-    private String sessionId;
+    @TableField(value = "password_hash")
+    String password;
 
-    @TableField("character_type")
-    private Short characterType; // 0=宵宫, 1=温迪, 2=胡桃
+    @TableField(value = "nickname")
+    String nickname;
 
-    @TableField("character_name")
-    private String characterName; // 角色名称
+    @TableField(value = "avatar_url")
+    String avatarUrl;
+
+    @TableField(value = "last_login_at",fill = FieldFill.INSERT_UPDATE)
+    private LocalDateTime lastLoginAt;
 
     @TableField(value = "created_at", fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

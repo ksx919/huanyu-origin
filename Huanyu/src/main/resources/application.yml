@@ -18,6 +18,27 @@ spring:
       host: 120.26.29.90
       port: 6379
       password: ${REDIS_PASSWORD}
+      timeout: 10000ms
+      connect-timeout: 10000ms
+      lettuce:
+        pool:
+          max-active: 20
+          max-idle: 10
+          min-idle: 5
+          max-wait: 10000ms
+        shutdown-timeout: 100ms
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: ${MAIL_USERNAME}
+    password: ${MAIL_PASSWORD}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
 
 springdoc:
   swagger-ui:
