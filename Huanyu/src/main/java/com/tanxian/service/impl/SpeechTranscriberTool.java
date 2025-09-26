@@ -33,7 +33,8 @@ public class SpeechTranscriberTool {
     AiChatService aiChatService;
     @Autowired
     SendToAiTool sendToAiTool;
-    private String appKey,id,secret,url;
+
+    private String appKey,id,secret,url,sessionId;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
     public boolean isRecording;
@@ -114,8 +115,9 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
-
-                sendToAiTool.sendToAi("Jason",response.getTransSentenceText(),(short)1);
+                short characterId = (short) (sessionId.charAt(sessionId.length() - 1)-'0');
+                System.out.println("lwj会话id是:"+sessionId);
+                sendToAiTool.sendToAi(sessionId,response.getTransSentenceText(),characterId);
 
             }
 
@@ -207,8 +209,10 @@ public class SpeechTranscriberTool {
         }
     }
 
-    public void process(byte[] data) {
+
+    public void process(byte[] data,String sessionId) {
         try {
+            this.sessionId = sessionId;
             if(!isRecording) {
                 isRecording = true;
                 //创建实例、建立连接。

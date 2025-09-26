@@ -6,7 +6,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisPassword;
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration;
-import org.springframework.data.redis.connection.lettuce.LettuceClientConfiguration;
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -14,6 +13,8 @@ import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSeriali
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
 import java.time.Duration;
+import org.apache.commons.pool2.impl.GenericObjectPoolConfig;
+import org.springframework.data.redis.connection.lettuce.LettucePoolingClientConfiguration;
 
 @Configuration
 public class RedisConfig {
@@ -32,10 +33,21 @@ public class RedisConfig {
                 new RedisStandaloneConfiguration(redisHost, redisPort);
         standaloneConfig.setPassword(RedisPassword.of(redisPassWord));
 
-        LettuceClientConfiguration clientConfig =
-                LettuceClientConfiguration.builder()
-                        // 设置命令超时，比如 2 秒
-                        .commandTimeout(Duration.ofSeconds(2))
+        // 配置连接池
+        GenericObjectPoolConfig<Object> poolConfig = new GenericObjectPoolConfig<>();
+        poolConfig.setMaxTotal(20);  // 最大连接数
+        poolConfig.setMaxIdle(10);   // 最大空闲连接数
+        poolConfig.setMinIdle(5);    // 最小空闲连接数
+        poolConfig.setMaxWait(Duration.ofMillis(10000)); // 获取连接最大等待时间
+        poolConfig.setTestOnBorrow(true);   // 获取连接时检测连接是否有效
+        poolConfig.setTestOnReturn(true);   // 归还连接时检测连接是否有效
+        poolConfig.setTestWhileIdle(true);  // 空闲时检测连接是否有效
+
+        LettucePoolingClientConfiguration clientConfig =
+                LettucePoolingClientConfiguration.builder()
+                        .poolConfig(poolConfig)
+                        .commandTimeout(Duration.ofSeconds(10))  // 命令超时时间
+                        .shutdownTimeout(Duration.ofMillis(100)) // 关闭超时时间
                         .build();
 
         return new LettuceConnectionFactory(standaloneConfig, clientConfig);

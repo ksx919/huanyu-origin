@@ -227,6 +227,7 @@ const stopRecording = () => {
 
     console.log('录音资源已清理');
 
+
     if (socket && socket.readyState === WebSocket.OPEN) {
       setTimeout(() => {
         if(socket) socket.close(1000, '录音结束');
@@ -236,6 +237,7 @@ const stopRecording = () => {
     console.error('停止录音时出错:', error);
   }
 };
+
 
 const beforeTitleEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(-30px)'; };
 const enterTitle = (el: Element, done: () => void) => { gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', onComplete: done }); };
