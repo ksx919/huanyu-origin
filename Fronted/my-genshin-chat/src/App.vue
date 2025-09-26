@@ -59,7 +59,7 @@
                 @mousedown="startRecording"
                 @mouseup="stopRecording"
                 @mouseleave="stopRecording"
-                :disabled="!selectedCharacter || connectionStatus !== 'connected'"
+                :disabled="!selectedCharacter || isRecording"
                 :class="{ recording: isRecording }"
             >
               {{ getRecordButtonText() }}
@@ -74,64 +74,8 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import gsap from 'gsap';
-
-
-const characters = ref([
-  { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' }, // 请替换为你的图片链接
-  { id: 'Venti', name: '温迪', avatar: 'https://i.imgur.com/Qh15D0G.png' },
-  { id: 'Xiaogong', name: '宵宫', avatar: 'https://i.imgur.com/C4B3tA4.png' }
-]);
-
-// 角色选择逻辑修改
-const selectCharacter = (charId: string) => {
-  selectedCharacter.value = charId;
-  conversation.value = [];
-  if (connectionStatus.value !== 'connected') {
-    connectWebSocket();
-  }
-};
-
-const deselectCharacter = () => {
-  selectedCharacter.value = null;
-  // 可以选择在这里断开WebSocket连接
-  if (socket) {
-    socket.close(1000, '用户返回选择界面');
-  }
-};
-
-const beforeTitleEnter = (el: Element) => {
-  (el as HTMLElement).style.opacity = '0';
-  (el as HTMLElement).style.transform = 'translateY(-30px)';
-};
-const enterTitle = (el: Element, done: () => void) => {
-  gsap.to(el, {
-    opacity: 1,
-    y: 0,
-    duration: 0.8,
-    ease: 'power3.out',
-    onComplete: done
-  });
-};
-
-const beforeCharEnter = (el: Element) => {
-  (el as HTMLElement).style.opacity = '0';
-  (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)';
-};
-const enterChar = (el: Element, done: () => void) => {
-  const index = parseInt((el as HTMLElement).dataset.index || '0');
-  gsap.to(el, {
-    opacity: 1,
-    y: 0,
-    scale: 1,
-    duration: 0.6,
-    delay: index * 0.15 + 0.5, // 标题动画结束后开始，并依次延迟
-    ease: 'power2.out',
-    onComplete: done
-  });
-};
-
 
 // 类型定义
 interface ChatMessage {
@@ -139,134 +83,191 @@ interface ChatMessage {
   content: string;
   timestamp?: number;
 }
+
+const characters = ref([
+  { id: 'Hutao', name: '胡桃', avatar: 'https://i.imgur.com/od223tH.png' },
+  { id: 'Venti', name: '温迪', avatar: 'https://i.imgur.com/Qh15D0G.png' },
+  { id: 'Xiaogong', name: '宵宫', avatar: 'https://i.imgur.com/C4B3tA4.png' }
+]);
+
 // 响应式数据
 const selectedCharacter = ref<string | null>(null);
 const isRecording = ref(false);
 const conversation = ref<ChatMessage[]>([]);
 const connectionStatus = ref<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+
 // WebSocket 和录音相关变量
 let socket: WebSocket | null = null;
 let audioContext: AudioContext | null = null;
 let mediaStream: MediaStream | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
-// 计算属性和辅助函数
-const connectionStatusText = computed(() => {
-  const statusMap = {
-    'disconnected': '未连接',
-    'connecting': '连接中...',
-    'connected': '已连接',
-    'error': '连接错误'
-  };
-  return statusMap[connectionStatus.value];
-});
-const getCharacterName = (char: string | null) => {
-  return characters.value.find(c => c.id === char)?.name || '未知角色';
-};
-const getRecordButtonText = () => {
-  if (!selectedCharacter.value) return '请先选择角色';
-  if (connectionStatus.value !== 'connected') return '等待连接...';
-  if (isRecording.value) return '正在录音... (松开停止)';
-  return '按住说话';
-};
 
-// 录音功能
-const startRecording = async () => {
-  if (!selectedCharacter.value || isRecording.value) return;
+// WebSocket 连接函数 (返回 Promise)
+const connectWebSocket = () => {
+  return new Promise<void>((resolve, reject) => {
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      resolve();
+      return;
+    }
 
-  connectionStatus.value = 'connecting';
-  const backendUrl = 'ws://localhost:8000/ws-audio';
-  socket = new WebSocket(backendUrl);
-  socket.binaryType = "arraybuffer";
-
-  socket.onopen = async () => {
-    console.log('WebSocket 连接已为本次录音建立');
-    connectionStatus.value = 'connected';
+    connectionStatus.value = 'connecting';
+    const backendUrl = 'ws://localhost:8000/ws-audio';
 
     try {
-      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioContext = new AudioContext();
-      await audioContext.audioWorklet.addModule('/audio-processor.js');
+      socket = new WebSocket(backendUrl);
+      socket.binaryType = "arraybuffer";
 
-      const source = audioContext.createMediaStreamSource(mediaStream);
-      audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-      source.connect(audioWorkletNode).connect(audioContext.destination);
+      socket.onopen = () => {
+        console.log('WebSocket 连接已建立');
+        connectionStatus.value = 'connected';
 
-      socket.send(JSON.stringify({
-        type: 'character_select',
-        characterId: selectedCharacter.value
-      }));
-
-      audioWorkletNode.port.onmessage = (event) => {
-        if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
-          socket.send(event.data.data);
+        if (selectedCharacter.value) {
+          socket!.send(JSON.stringify({
+            type: 'character_select',
+            characterId: selectedCharacter.value
+          }));
         }
+        resolve();
       };
 
-      isRecording.value = true;
-      conversation.value.push({ role: 'user', content: '（语音输入，等待识别...）', timestamp: Date.now() });
+      socket.onmessage = (event) => {
+        if (conversation.value.length > 0 && conversation.value[conversation.value.length - 1].role === 'user') {
+          if (conversation.value[conversation.value.length - 1].content === '（语音输入，等待识别...）') {
+            conversation.value[conversation.value.length - 1].content = '（语音输入已识别）';
+          }
+        }
+        conversation.value.push({
+          role: 'ai',
+          content: event.data,
+          timestamp: Date.now()
+        });
+      };
 
+      socket.onerror = (error) => {
+        console.error('WebSocket 错误:', error);
+        connectionStatus.value = 'error';
+        reject(error);
+      };
+
+      socket.onclose = (event) => {
+        console.log('WebSocket 连接已关闭', event.code, event.reason);
+        if (connectionStatus.value === 'connecting') {
+          reject(new Error(`连接关闭，请检查后端服务是否开启。 Code: ${event.code}`));
+        }
+        connectionStatus.value = 'disconnected';
+        socket = null;
+      };
     } catch (error) {
-      console.error('音频处理启动失败:', error);
-      alert('无法访问麦克风');
-      stopRecording(); // 如果失败，确保清理
+      console.error('创建 WebSocket 失败:', error);
+      connectionStatus.value = 'error';
+      reject(error);
     }
-  };
+  });
+};
 
-  socket.onmessage = (event) => {
-    console.log('收到后端回复:', event.data);
-    if (conversation.value.length > 0 && conversation.value[conversation.value.length - 1].role === 'user') {
-      conversation.value[conversation.value.length - 1].content = '（语音输入已识别）';
-    }
-    conversation.value.push({ role: 'ai', content: event.data, timestamp: Date.now() });
-  };
+// 角色选择逻辑
+const selectCharacter = (charId: string) => {
+  selectedCharacter.value = charId;
+  conversation.value = [];
+  // 此处不再连接
+};
 
-  socket.onerror = (error) => {
-    console.error('WebSocket 错误:', error);
-    connectionStatus.value = 'error';
-  };
+const deselectCharacter = () => {
+  selectedCharacter.value = null;
+  conversation.value = [];
+  if (socket && socket.readyState === WebSocket.OPEN) {
+    socket.close(1000, '用户返回选择界面');
+  }
+};
 
-  socket.onclose = (event) => {
-    console.log('WebSocket 连接已关闭');
-    connectionStatus.value = 'disconnected';
-  };
+const startRecording = async () => {
+  if (isRecording.value) return;
+
+  try {
+    // 1. 在录音开始时建立新连接，并等待成功
+    await connectWebSocket();
+
+    isRecording.value = true;
+
+    // 2. 获取麦克风和设置 AudioWorklet
+    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    await audioContext.audioWorklet.addModule('/audio-processor.js');
+    audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+    const source = audioContext.createMediaStreamSource(mediaStream);
+    source.connect(audioWorkletNode);
+    audioWorkletNode.connect(audioContext.destination);
+
+    audioWorkletNode.port.onmessage = (event) => {
+      if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(event.data.data);
+      }
+    };
+
+    conversation.value.push({
+      role: 'user',
+      content: '（语音输入，等待识别...）',
+      timestamp: Date.now()
+    });
+    console.log('录音已开始');
+
+  } catch (error) {
+    console.error('录音或连接失败:', error);
+    alert('无法访问麦克风或连接服务器，请检查权限和网络');
+    stopRecording();
+  }
 };
 
 const stopRecording = () => {
-  if (!isRecording.value) return;
+  if (!isRecording.value && !mediaStream) return;
 
   isRecording.value = false;
 
   try {
-    if (audioWorkletNode) {
-      audioWorkletNode.disconnect();
-      audioWorkletNode = null;
-    }
-    if (audioContext) {
-      audioContext.close();
-      audioContext = null;
-    }
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(track => track.stop());
-      mediaStream = null;
-    }
+    if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
+    if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
+    if (audioContext && audioContext.state !== 'closed') { audioContext.close(); audioContext = null; }
 
+    console.log('录音资源已清理');
+
+    // 3. 关闭 WebSocket 连接
     if (socket && socket.readyState === WebSocket.OPEN) {
-
-      socket.close(1000, "客户端正常停止录音");
+      setTimeout(() => {
+        if(socket) socket.close(1000, '录音结束');
+      }, 100);
     }
-    socket = null;
-
-    console.log('录音已停止，连接已关闭');
-
   } catch (error) {
     console.error('停止录音时出错:', error);
   }
 };
+
+// 动画函数 (这部分没变)
+const beforeTitleEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(-30px)'; };
+const enterTitle = (el: Element, done: () => void) => { gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', onComplete: done }); };
+const beforeCharEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)'; };
+const enterChar = (el: Element, done: () => void) => {
+  const index = parseInt((el as HTMLElement).dataset.index || '0');
+  gsap.to(el, { opacity: 1, y: 0, scale: 1, duration: 0.6, delay: index * 0.15 + 0.5, ease: 'power2.out', onComplete: done });
+};
+
+// 计算属性和辅助函数
+const getCharacterName = (char: string | null) => {
+  return characters.value.find(c => c.id === char)?.name || '未知角色';
+};
+
+const getRecordButtonText = () => {
+  if (connectionStatus.value === 'connecting') return '正在连接...';
+  if (connectionStatus.value === 'error') return '连接失败, 点击重试';
+  if (isRecording.value) return '正在录音... (松开停止)';
+  return '按住说话';
+};
+
 // 生命周期管理
-onMounted(() => {});
 onUnmounted(() => {
-  if (socket) { socket.close(1000, '用户离开页面'); }
   stopRecording();
+  if (socket) {
+    socket.close(1000, '用户离开页面');
+  }
 });
 </script>
 
@@ -381,7 +382,6 @@ body {
   text-shadow: 0 0 10px rgba(0,0,0,0.5);
 }
 
-
 .chat-screen {
   width: 100%;
   max-width: 600px;
@@ -413,7 +413,6 @@ body {
   transform: scale(0.7) translateY(50px);
 }
 
-
 .chat-header {
   display: flex;
   justify-content: space-between;
@@ -440,20 +439,20 @@ body {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #6c757d; /* disconnected */
+  background: #6c757d;
   transition: background 0.3s;
 }
 .status-light.connecting { background: #ffc107; }
 .status-light.connected { background: #28a745; }
 .status-light.error { background: #dc3545; }
 
-
 .chat-window {
   flex-grow: 1;
   overflow-y: auto;
   padding: 15px 5px;
   display: flex;
-  flex-direction: column-reverse;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .chat-window::-webkit-scrollbar { width: 6px; }
@@ -463,47 +462,70 @@ body {
 .chat-window .empty-chat {
   text-align: center;
   color: rgba(255,255,255,0.6);
-  margin-top: auto;
-  margin-bottom: auto;
+  margin: auto;
 }
 
 .chat-window .user, .chat-window .ai {
-  margin-bottom: 10px;
   padding: 10px 15px;
   border-radius: 15px;
   max-width: 80%;
   word-wrap: break-word;
 }
+
 .chat-window .user {
   background: #007bff;
   align-self: flex-end;
   border-bottom-right-radius: 3px;
+  margin-left: auto;
 }
+
 .chat-window .ai {
   background: rgba(255, 255, 255, 0.1);
   align-self: flex-start;
   border-bottom-left-radius: 3px;
+  margin-right: auto;
 }
-
 
 .controls {
   padding-top: 15px;
   text-align: center;
   flex-shrink: 0;
 }
+
 .record-btn {
-  padding: 15px 30px; font-size: 18px; border: none;
-  border-radius: 50px; cursor: pointer;
-  transition: all 0.3s ease; min-width: 200px;
+  padding: 15px 30px;
+  font-size: 18px;
+  border: none;
+  border-radius: 50px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  min-width: 200px;
 }
-.record-btn:not(:disabled) { background: #007bff; color: white; }
-.record-btn:not(:disabled):hover { background: #0056b3; transform: translateY(-2px); }
-.record-btn.recording { background: #dc3545 !important; animation: pulse 1.5s infinite; }
-.record-btn:disabled { background: #6c757d; color: #fff; cursor: not-allowed; }
+
+.record-btn:not(:disabled) {
+  background: #007bff;
+  color: white;
+}
+
+.record-btn:not(:disabled):hover {
+  background: #0056b3;
+  transform: translateY(-2px);
+}
+
+.record-btn.recording {
+  background: #dc3545 !important;
+  animation: pulse 1.5s infinite;
+}
+
+.record-btn:disabled {
+  background: #6c757d;
+  color: #fff;
+  cursor: not-allowed;
+}
+
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
   70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
   100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
 }
-
 </style>
