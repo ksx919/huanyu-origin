@@ -1,11 +1,8 @@
-package com.tanxian.tool;
+package com.tanxian.service.impl;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.util.HashMap;
-import java.util.Map;
 
 import com.alibaba.nls.client.AccessToken;
 import com.alibaba.nls.client.protocol.InputFormatEnum;
@@ -16,15 +13,11 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.SendToAiTool;
-import com.tanxian.service.impl.AiChatServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
-import reactor.core.publisher.Flux;
+import org.springframework.stereotype.Service;
 
 /**
  * 此示例演示了：
@@ -33,14 +26,14 @@ import reactor.core.publisher.Flux;
  * 通过本地模拟实时流发送。
  * 识别耗时计算。
  */
-@Component
+@Service
 @Scope("prototype")
 public class SpeechTranscriberTool {
     @Autowired
     AiChatService aiChatService;
     @Autowired
     SendToAiTool sendToAiTool;
-    private String appKey,id,secret,url;
+    private String appKey,id,secret,url,sessionId;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
     public boolean isRecording;
@@ -121,8 +114,9 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
-
-                sendToAiTool.sendToAi("Jason",response.getTransSentenceText(),(short)1);
+                short characterId = (short) (sessionId.charAt(sessionId.length() - 1)-'0');
+                System.out.println("lwj会话id是:"+sessionId);
+                sendToAiTool.sendToAi(sessionId,response.getTransSentenceText(),characterId);
 
             }
 
@@ -214,8 +208,9 @@ public class SpeechTranscriberTool {
         }
     }
 
-    public void process(byte[] data) {
+    public void process(byte[] data,String sessionId) {
         try {
+            this.sessionId = sessionId;
             if(!isRecording) {
                 isRecording = true;
                 //创建实例、建立连接。

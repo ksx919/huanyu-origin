@@ -7,6 +7,7 @@ import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.ChatMessageMapper;
 import com.tanxian.mapper.ChatSessionMapper;
+import com.tanxian.service.MessageTurnToAiVoiceTool;
 import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -46,6 +47,9 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
 
     @Autowired
     private ChatSessionMapper chatSessionMapper;
+
+    @Autowired
+    MessageTurnToAiVoiceTool messageTurnToAiVoiceTool;
 
     // 系统消息模板缓存（从本地文件加载）
     private final Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
@@ -406,6 +410,9 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                                 dbMessage.getContent().length() > 50 ? 
                                 dbMessage.getContent().substring(0, 50) + "..." : 
                                 dbMessage.getContent());
+                        if(dbMessage.getMessageType().equals("ASSISTANT")) {
+                            messageTurnToAiVoiceTool.turnToAiVoice(dbMessage.getContent(),dbMessage.getSessionId());
+                        }
                     }
                 } else {
                     log.debug("消息已存在于数据库中，无需重复存储");
