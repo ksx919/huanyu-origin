@@ -1,11 +1,8 @@
-package com.tanxian.tool;
+package com.tanxian.service.impl;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.util.HashMap;
-import java.util.Map;
 
 import com.alibaba.nls.client.AccessToken;
 import com.alibaba.nls.client.protocol.InputFormatEnum;
@@ -15,16 +12,12 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriber;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
-import com.tanxian.service.impl.AiChatServiceImpl;
+import com.tanxian.service.SendToAiTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
-import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
-import reactor.core.publisher.Flux;
+import org.springframework.stereotype.Service;
 
 /**
  * 此示例演示了：
@@ -33,11 +26,13 @@ import reactor.core.publisher.Flux;
  * 通过本地模拟实时流发送。
  * 识别耗时计算。
  */
-@Component
+@Service
 @Scope("prototype")
 public class SpeechTranscriberTool {
     @Autowired
     AiChatService aiChatService;
+    @Autowired
+    SendToAiTool sendToAiTool;
     private String appKey,id,secret,url;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
@@ -119,15 +114,9 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
-                //发送句子到指定接口
-                String SessionId = "lwj520",message = response.getTransSentenceText();
-                short type = 2;
-                Flux<String> aiReplies = aiChatService.chat(SessionId,message,type);
-                aiReplies.subscribe(
-                        reply -> System.out.println("【AI回复】：" + reply), // onNext 事件（收到数据）
-                        error -> System.err.println("【错误】：" + error.getMessage()), // onError 事件（发生异常）
-                        () -> System.out.println("【流结束】") // onComplete 事件（流完成）
-                );
+
+                sendToAiTool.sendToAi("Jason",response.getTransSentenceText(),(short)1);
+
             }
 
             //识别完毕
