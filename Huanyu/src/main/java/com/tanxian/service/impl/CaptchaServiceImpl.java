@@ -132,14 +132,14 @@ public class CaptchaServiceImpl implements CaptchaService {
             throw new BusinessException(BusinessExceptionEnum.EMAIL_CODE_SEND_FAILED);
         }
     }
-    
+
     /**
-     * 将BufferedImage转换为Base64字符串
+     * 将图片转换为Base64编码
      */
     private String convertImageToBase64(BufferedImage image) throws Exception {
-        ByteArrayOutputStream baos = new ByteArrayOutputStream();
-        ImageIO.write(image, "png", baos);
-        byte[] imageBytes = baos.toByteArray();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        ImageIO.write(image, "png", outputStream);
+        byte[] imageBytes = outputStream.toByteArray();
         return Base64.getEncoder().encodeToString(imageBytes);
     }
 }

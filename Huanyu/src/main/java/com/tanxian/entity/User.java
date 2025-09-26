@@ -20,7 +20,7 @@ public class User {
     String email;
 
     @TableField(value = "password_hash")
-    String password;
+    String passwordHash;
 
     @TableField(value = "nickname")
     String nickname;

@@ -1,8 +1,12 @@
 package com.tanxian.controller;
 
 import com.tanxian.common.CommonResp;
+import com.tanxian.req.LoginReq;
+import com.tanxian.req.RegisterReq;
 import com.tanxian.resp.CaptchaResp;
 import com.tanxian.req.EmailCodeReq;
+import com.tanxian.resp.LoginResp;
+import com.tanxian.resp.RegisterResp;
 import com.tanxian.service.CaptchaService;
 import com.tanxian.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,5 +54,27 @@ public class UserController {
         );
         
         return new CommonResp<>(true, "邮箱验证码发送成功，请查收邮件", "发送成功");
+    }
+
+    /**
+     * 用户注册
+     */
+    @PostMapping("/register")
+    @Operation(summary = "用户注册", description = "通过邮箱验证码注册新用户")
+    public CommonResp<RegisterResp> register(@Valid @RequestBody RegisterReq request) {
+        log.info("用户注册请求: email={}", request.getEmail());
+        RegisterResp registerResp = userService.register(request);
+        return new CommonResp<>(registerResp);
+    }
+
+    /**
+     * 用户登录
+     */
+    @PostMapping("/login")
+    @Operation(summary = "用户登录", description = "支持密码登录和邮箱验证码登录")
+    public CommonResp<LoginResp> login(@Valid @RequestBody LoginReq request) {
+        log.info("用户登录请求: email={}, loginType={}", request.getEmail(), request.getLoginType());
+        LoginResp loginResp = userService.login(request);
+        return new CommonResp<>(loginResp);
     }
 }
