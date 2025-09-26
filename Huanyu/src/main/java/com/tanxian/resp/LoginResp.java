@@ -14,7 +14,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 public class LoginResp {
-    
+
+    private Long id;
     /**
      * JWT Token
      */
@@ -29,10 +30,4 @@ public class LoginResp {
      * 用户昵称
      */
     private String nickname;
-    
-    /**
-     * 最后登录时间
-     */
-    @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss",timezone = "GMT+8")
-    private LocalDateTime lastLoginAt;
 }

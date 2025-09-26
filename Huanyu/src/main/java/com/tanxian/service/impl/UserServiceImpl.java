@@ -32,9 +32,6 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private StringRedisTemplate redisTemplate;
     
-    @Autowired
-    private JwtUtil jwtUtil;
-    
     @Override
     @Transactional
     public RegisterResp register(RegisterReq registerReq) {
@@ -86,7 +83,7 @@ public class UserServiceImpl implements UserService {
         }
         
         // 2. 根据登录类型验证
-        boolean verified = false;
+        boolean verified;
         if (loginReq.getLoginType()==0) {
             // 密码登录
             if (loginReq.getPassword() == null || loginReq.getPassword().trim().isEmpty()) {
@@ -113,7 +110,7 @@ public class UserServiceImpl implements UserService {
         user.setLastLoginAt(now);
         
         // 4. 生成JWT Token
-        String token = jwtUtil.generateToken(
+        String token = JwtUtil.generateToken(
             user.getId(),
             user.getEmail(),
             user.getNickname(),
@@ -124,10 +121,10 @@ public class UserServiceImpl implements UserService {
         
         // 5. 返回登录响应
         return new LoginResp(
+            user.getId(),
             token,
             user.getEmail(),
-            user.getNickname(),
-            user.getLastLoginAt()
+            user.getNickname()
         );
     }
     

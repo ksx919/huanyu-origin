@@ -1,12 +1,14 @@
 package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tanxian.common.LoginUserContext;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.entity.ChatSession;
 import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.ChatMessageMapper;
 import com.tanxian.mapper.ChatSessionMapper;
+import com.tanxian.resp.LoginResp;
 import com.tanxian.service.MessageTurnToAiVoiceTool;
 import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
@@ -593,6 +595,8 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             if (existingSession == null) {
                 ChatSession chatSession = new ChatSession();
                 chatSession.setSessionId(sessionId);
+                //todo 传入UserId
+                chatSession.setUserId(3L);
                 chatSession.setCharacterType(characterType);
                 chatSession.setCharacterName(getCharacterNameByType(characterType));
                 chatSession.setCreatedAt(LocalDateTime.now());

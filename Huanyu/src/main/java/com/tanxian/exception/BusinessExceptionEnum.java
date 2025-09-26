@@ -20,7 +20,11 @@ public enum BusinessExceptionEnum {
     PASSWORD_REQUIRED("密码不能为空"),
     EMAIL_CODE_REQUIRED("邮箱验证码不能为空"),
     INVALID_LOGIN_TYPE("无效的登录类型"),
-    LOGIN_FAILED("登录失败");
+    LOGIN_FAILED("登录失败"),
+    
+    // JWT Token相关异常
+    TOKEN_REQUIRED("请求缺少JWT Token"),
+    TOKEN_INVALID("JWT Token无效或已过期");
 
     BusinessExceptionEnum(String desc) {
         this.desc = desc;

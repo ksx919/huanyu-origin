@@ -1,5 +1,9 @@
 package com.tanxian.util;
 
+import cn.hutool.json.JSONObject;
+import cn.hutool.jwt.JWT;
+import cn.hutool.jwt.JWTPayload;
+import cn.hutool.jwt.JWTUtil;
 import io.jsonwebtoken.*;
 import io.jsonwebtoken.security.Keys;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +46,7 @@ public class JwtUtil {
      * @param avatarUrl 用户头像URL
      * @return JWT Token
      */
-    public String generateToken(Long userId, String email, String nickname, String avatarUrl) {
+    public static String generateToken(Long userId, String email, String nickname, String avatarUrl) {
         Date now = new Date();
         Date expiration = new Date(now.getTime() + JWT_EXPIRATION);
 
@@ -64,7 +68,7 @@ public class JwtUtil {
      * @param token JWT Token
      * @return 是否有效
      */
-    public boolean validateToken(String token) {
+    public static boolean validateToken(String token) {
         try {
             Jwts.parser()
                 .verifyWith(SECRET_KEY)
@@ -83,7 +87,7 @@ public class JwtUtil {
      * @param token JWT Token
      * @return 用户ID
      */
-    public Long getUserIdFromToken(String token) {
+    public static Long getUserIdFromToken(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(SECRET_KEY)
@@ -103,7 +107,7 @@ public class JwtUtil {
      * @param token JWT Token
      * @return 用户信息Map
      */
-    public Map<String, Object> getUserInfoFromToken(String token) {
+    public static Map<String, Object> getUserInfoFromToken(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(SECRET_KEY)
@@ -129,7 +133,7 @@ public class JwtUtil {
      * @param token JWT Token
      * @return 是否过期
      */
-    public boolean isTokenExpired(String token) {
+    public static boolean isTokenExpired(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(SECRET_KEY)
@@ -149,7 +153,7 @@ public class JwtUtil {
      * @param token JWT Token
      * @return 剩余有效时间
      */
-    public long getTokenRemainingTime(String token) {
+    public static long getTokenRemainingTime(String token) {
         try {
             Claims claims = Jwts.parser()
                     .verifyWith(SECRET_KEY)
