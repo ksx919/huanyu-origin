@@ -15,13 +15,7 @@ public class SendToAiToolImpl implements SendToAiTool {
     @Override
     public byte[] sendToAi(String sessionId, String message, short type) {
         //Mark:SessionId and type must receive from front
-        Flux<String> aiReplies = aiChatService.chat(sessionId,message,type);
-        aiReplies.subscribe(
-                reply -> System.out.println("【AI回复】：" + reply), // onNext 事件（收到数据）
-                error -> System.err.println("【错误】：" + error.getMessage()), // onError 事件（发生异常）
-                () -> System.out.println("【流结束】") // onComplete 事件（流完成）
-        );
-
+        aiChatService.chat(sessionId,message,type);
         return new byte[0];
     }
 }

@@ -1,11 +1,8 @@
-package com.tanxian.tool;
+package com.tanxian.service.impl;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
-import java.net.URI;
-import java.util.HashMap;
-import java.util.Map;
 
 import com.alibaba.nls.client.AccessToken;
 import com.alibaba.nls.client.protocol.InputFormatEnum;
@@ -16,16 +13,11 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.SendToAiTool;
-import com.tanxian.service.impl.AiChatServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
-import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.UriComponentsBuilder;
-import reactor.core.publisher.Flux;
+import org.springframework.stereotype.Service;
 
 /**
  * 此示例演示了：
@@ -34,7 +26,7 @@ import reactor.core.publisher.Flux;
  * 通过本地模拟实时流发送。
  * 识别耗时计算。
  */
-@Component
+@Service
 @Scope("prototype")
 public class SpeechTranscriberTool {
     @Autowired
