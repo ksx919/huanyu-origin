@@ -169,7 +169,6 @@ const connectWebSocket = () => {
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
-  // 此处不再连接
 };
 
 const deselectCharacter = () => {
@@ -184,12 +183,10 @@ const startRecording = async () => {
   if (isRecording.value) return;
 
   try {
-    // 1. 在录音开始时建立新连接，并等待成功
     await connectWebSocket();
 
     isRecording.value = true;
 
-    // 2. 获取麦克风和设置 AudioWorklet
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
     await audioContext.audioWorklet.addModule('/audio-processor.js');
@@ -230,7 +227,6 @@ const stopRecording = () => {
 
     console.log('录音资源已清理');
 
-    // 3. 关闭 WebSocket 连接
     if (socket && socket.readyState === WebSocket.OPEN) {
       setTimeout(() => {
         if(socket) socket.close(1000, '录音结束');
@@ -241,7 +237,6 @@ const stopRecording = () => {
   }
 };
 
-// 动画函数 (这部分没变)
 const beforeTitleEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(-30px)'; };
 const enterTitle = (el: Element, done: () => void) => { gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', onComplete: done }); };
 const beforeCharEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)'; };
