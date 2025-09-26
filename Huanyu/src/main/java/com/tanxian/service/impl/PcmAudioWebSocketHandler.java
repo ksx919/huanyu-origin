@@ -1,4 +1,4 @@
-package com.tanxian.service;
+package com.tanxian.service.impl;
 
 import com.tanxian.tool.SpeechTranscriberTool;
 import org.springframework.beans.factory.annotation.Autowired;
