@@ -15,6 +15,7 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriber;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
+import com.tanxian.service.SendToAiTool;
 import com.tanxian.service.impl.AiChatServiceImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,6 +39,8 @@ import reactor.core.publisher.Flux;
 public class SpeechTranscriberTool {
     @Autowired
     AiChatService aiChatService;
+    @Autowired
+    SendToAiTool sendToAiTool;
     private String appKey,id,secret,url;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
@@ -119,15 +122,9 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
-                //Mark:SessionId and type must receive from front
-                String SessionId = "lwj520",message = response.getTransSentenceText();
-                short type = 2;
-                Flux<String> aiReplies = aiChatService.chat(SessionId,message,type);
-                aiReplies.subscribe(
-                        reply -> System.out.println("【AI回复】：" + reply), // onNext 事件（收到数据）
-                        error -> System.err.println("【错误】：" + error.getMessage()), // onError 事件（发生异常）
-                        () -> System.out.println("【流结束】") // onComplete 事件（流完成）
-                );
+
+                sendToAiTool.sendToAi("Jason",response.getTransSentenceText(),(short)1);
+
             }
 
             //识别完毕
