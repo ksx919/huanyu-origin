@@ -1,4 +1,4 @@
-package com.tanxian.config;
+package com.tanxian.interceptor;
 
 import cn.hutool.core.util.StrUtil;
 import com.tanxian.util.JwtUtil;
