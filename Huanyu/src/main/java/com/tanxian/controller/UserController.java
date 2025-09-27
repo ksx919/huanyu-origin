@@ -1,6 +1,8 @@
 package com.tanxian.controller;
 
 import com.tanxian.common.CommonResp;
+import com.tanxian.common.LoginUserContext;
+import com.tanxian.entity.ChatMessage;
 import com.tanxian.req.LoginReq;
 import com.tanxian.req.RegisterReq;
 import com.tanxian.req.UpdatePasswordReq;
@@ -16,6 +18,8 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import jakarta.validation.Valid;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/user")
@@ -87,16 +91,30 @@ public class UserController {
         return CommonResp.success(loginResp);
     }
 
+    /**
+     * 更新用户密码
+     * 
+     * @param request 包含旧密码和新密码的请求对象
+     * @return 登录响应对象，包含新的JWT token
+     */
     @PostMapping("/update/password")
-    @Operation(summary = "用户更新", description = "用户更新密码")
-    public CommonResp<?> updatePassword(@Valid @RequestBody UpdatePasswordReq request) {
+    @Operation(summary = "用户更新", description = "用户更新密码并轮换JWT")
+    public CommonResp<LoginResp> updatePassword(@Valid @RequestBody UpdatePasswordReq request) {
         log.info("用户更新请求: 旧密码={}, 新密码={}", request.getOldPassword(), request.getNewPassword());
-        if(userService.updatePassword(request)){
-            return CommonResp.success();
+        LoginResp resp = userService.updatePassword(request);
+        if (resp.getToken() == null) {
+            // 极端情况下未生成新token，仍返回错误提示
+            return CommonResp.error("更改密码失败或新Token生成失败");
         }
-        return CommonResp.error("更改密码失败");
+        return CommonResp.success(resp);
     }
 
+    /**
+     * 更新用户昵称
+     * 
+     * @param nickname 新昵称
+     * @return 更新昵称响应对象，包含用户ID、新昵称和新的JWT token
+     */
     @PostMapping("/update/nickname")
     @Operation(summary = "用户更新", description = "用户更新昵称")
     public CommonResp<UpdateNickNameResp> updateNickName(@Valid @RequestParam String nickname) {
@@ -104,7 +122,13 @@ public class UserController {
         return CommonResp.success(userService.updateNickName(nickname));
     }
 
-    @PostMapping("/update/avatarurl")
+    /**
+     * 更新用户头像
+     * 
+     * @param avatarUrl 新头像URL
+     * @return 更新头像响应对象，包含用户ID、新头像URL和新的JWT token
+     */
+    @PostMapping("/update/avatar-url")
     @Operation(summary = "用户更新", description = "用户更新头像")
     public CommonResp<UpdateAvatarUrlResp> updateAvatarUrl(@Valid @RequestParam String avatarUrl) {
         log.info("用户更新请求: 新头像={}",avatarUrl);

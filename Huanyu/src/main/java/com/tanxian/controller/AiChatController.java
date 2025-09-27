@@ -1,5 +1,6 @@
 package com.tanxian.controller;
 
+import com.tanxian.common.LoginUserContext;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.MyChatMemoryStore;
 import com.tanxian.service.impl.AiChatServiceImpl;
@@ -32,11 +33,10 @@ public class AiChatController {
     @GetMapping(value = "/chat" ,produces = "text/html;charset=utf-8")
     @Operation(summary = "与AI角色对话", description = "根据指定的角色类型与AI进行对话")
     public Flux<String> chat(
-            @Parameter(name = "sessionId", description = "会话ID", required = true) String sessionId,
             @Parameter(name = "message", description = "用户消息", required = true) String message,
             @Parameter(name = "type", description = "角色类型: 0=宵宫, 1=温迪, 2=胡桃", required = true) short type){
-        Flux<String> aiReplies = aiChatService.chat(sessionId,message,type);
-        return aiReplies;
+        String sessionId = LoginUserContext.getId()+""+type;
+        return aiChatService.chat(sessionId,message,type);
     }
 
     //根据sessionId获取聊天记录

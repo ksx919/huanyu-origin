@@ -8,6 +8,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
@@ -20,6 +22,9 @@ import java.util.Map;
 public class UserInterceptor implements HandlerInterceptor {
 
     private static final Logger LOG = LoggerFactory.getLogger(UserInterceptor.class);
+
+    @Autowired
+    private StringRedisTemplate redisTemplate;
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
@@ -84,6 +89,27 @@ public class UserInterceptor implements HandlerInterceptor {
                 loginResp.setNickname((String) userInfo.get("nickname"));
                 loginResp.setAvatarUrl((String) userInfo.get("avatarUrl"));
                 
+                // 校验Redis中存储的最新token与当前请求token一致，避免旧token继续使用
+                try {
+                    String tokenKey = getUserTokenRedisKey(loginResp.getId());
+                    String latestToken = redisTemplate.opsForValue().get(tokenKey);
+                    if (latestToken == null || !latestToken.equals(token)) {
+                        LOG.warn("请求token与Redis中最新token不一致或不存在: userId={}, key={}", loginResp.getId(), tokenKey);
+                        LoginUserContext.setUser(null);
+                        response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                        response.setContentType("application/json;charset=UTF-8");
+                        response.getWriter().write("{\"code\":403,\"message\":\"JWT Token已失效，请重新登录\"}");
+                        return false;
+                    }
+                } catch (Exception e) {
+                    LOG.error("校验Redis token失败", e);
+                    LoginUserContext.setUser(null);
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"code\":403,\"message\":\"服务器验证Token失败\"}");
+                    return false;
+                }
+
                 // 设置到线程上下文中
                 LoginUserContext.setUser(loginResp);
                 LOG.debug("用户信息已设置到上下文，用户ID: {}", loginResp.getId());
@@ -110,5 +136,9 @@ public class UserInterceptor implements HandlerInterceptor {
         // 请求完成后清理ThreadLocal，防止内存泄漏
         LoginUserContext.setUser(null);
         LOG.debug("请求完成，已清理用户上下文");
+    }
+
+    private String getUserTokenRedisKey(Long userId) {
+        return "auth:token:" + userId;
     }
 }

@@ -41,9 +41,27 @@ public interface UserService {
      */
     boolean verifyPassword(String email, String password);
 
-    boolean updatePassword(UpdatePasswordReq request);
+    /**
+     * 更新用户密码
+     * 
+     * @param request 包含旧密码和新密码的请求对象
+     * @return 登录响应对象，包含新的JWT token
+     */
+    LoginResp updatePassword(UpdatePasswordReq request);
 
+    /**
+     * 更新用户昵称
+     * 
+     * @param nickname 新昵称
+     * @return 更新昵称响应对象，包含用户ID、新昵称和新的JWT token
+     */
     UpdateNickNameResp updateNickName(String nickname);
 
+    /**
+     * 更新用户头像
+     * 
+     * @param avatarUrl 新头像URL
+     * @return 更新头像响应对象，包含用户ID、新头像URL和新的JWT token
+     */
     UpdateAvatarUrlResp updateAvatarUrl(String avatarUrl);
 }
