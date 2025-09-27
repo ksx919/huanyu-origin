@@ -21,7 +21,7 @@ import java.util.List;
 @RequestMapping("/ai")
 @Tag(name = "AI对话接口", description = "提供与AI角色进行对话的接口")
 public class AiChatController {
-    
+
     @Autowired
     private AiChatService aiChatService;
 
