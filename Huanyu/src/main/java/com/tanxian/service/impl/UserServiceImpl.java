@@ -1,12 +1,14 @@
 package com.tanxian.service.impl;
 
 import cn.hutool.core.util.ObjectUtil;
+import com.tanxian.common.LoginUserContext;
 import com.tanxian.entity.User;
 import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.UserMapper;
 import com.tanxian.req.LoginReq;
 import com.tanxian.req.RegisterReq;
+import com.tanxian.req.UpdatePasswordReq;
 import com.tanxian.resp.LoginResp;
 import com.tanxian.resp.RegisterResp;
 import com.tanxian.service.UserService;
@@ -172,5 +174,69 @@ public class UserServiceImpl implements UserService {
             log.error("验证用户密码失败: email={}", email, e);
             return false;
         }
+    }
+
+    @Override
+    @Transactional
+    public boolean updatePassword(UpdatePasswordReq request) {
+        log.info("用户更新请求: 旧密码={}, 新密码={}", request.getOldPassword(), request.getNewPassword());
+
+        // 1. 查找用户
+        Long userId = LoginUserContext.getId();
+        User user = userMapper.selectById(userId);
+        if (ObjectUtil.isEmpty(user)) {
+            throw new BusinessException(BusinessExceptionEnum.USER_NOT_FOUND);
+        }
+
+        // 2. 校验旧密码密码是否正确
+        if(user.getPasswordHash()==PasswordUtil.encryptPassword(request.getOldPassword())){
+            user.setPasswordHash(PasswordUtil.encryptPassword(request.getNewPassword()));
+        }
+        else{
+            return false;
+        }
+
+        // 3. 更新最后登录时间
+        LocalDateTime now = LocalDateTime.now();
+        userMapper.updateLastLoginTime(user.getId(), now);
+        user.setLastLoginAt(now);
+
+        // 4. 生成JWT Token
+        String token = JwtUtil.generateToken(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getAvatarUrl()
+        );
+
+        log.info("用户更新密码成功: userId={}", user.getId());
+
+        // 5. 返回登录响应
+        return true;
+    }
+
+    @Override
+    @Transactional
+    public boolean updateNickName(String nickname) {
+        log.info("用户更新请求: 新昵称={}",nickname);
+        Long userId = LoginUserContext.getId();
+        User user = userMapper.selectById(userId);
+        if (ObjectUtil.isEmpty(user)) {
+            throw new BusinessException(BusinessExceptionEnum.USER_NOT_FOUND);
+        }
+
+
+        if(user.getNickname().equals(nickname)){
+            return false;
+        }
+        user.setNickname(nickname);
+        String token = JwtUtil.generateToken(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getAvatarUrl()
+        );
+        return true;
+
     }
 }

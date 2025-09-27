@@ -2,8 +2,10 @@ package com.tanxian.service;
 
 import com.tanxian.req.LoginReq;
 import com.tanxian.req.RegisterReq;
+import com.tanxian.req.UpdatePasswordReq;
 import com.tanxian.resp.LoginResp;
 import com.tanxian.resp.RegisterResp;
+import jakarta.validation.Valid;
 
 public interface UserService {
     
@@ -36,4 +38,8 @@ public interface UserService {
      * @return 是否验证成功
      */
     boolean verifyPassword(String email, String password);
+
+    boolean updatePassword(UpdatePasswordReq request);
+
+    boolean updateNickName(String nickname);
 }

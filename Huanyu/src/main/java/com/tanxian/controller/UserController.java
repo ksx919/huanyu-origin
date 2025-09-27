@@ -3,6 +3,7 @@ package com.tanxian.controller;
 import com.tanxian.common.CommonResp;
 import com.tanxian.req.LoginReq;
 import com.tanxian.req.RegisterReq;
+import com.tanxian.req.UpdatePasswordReq;
 import com.tanxian.resp.CaptchaResp;
 import com.tanxian.req.EmailCodeReq;
 import com.tanxian.resp.LoginResp;
@@ -76,5 +77,25 @@ public class UserController {
         log.info("用户登录请求: email={}, loginType={}", request.getEmail(), request.getLoginType());
         LoginResp loginResp = userService.login(request);
         return CommonResp.success(loginResp);
+    }
+
+    @PostMapping("/update/password")
+    @Operation(summary = "用户更新", description = "用户更新密码")
+    public CommonResp<?> updatePassword(@Valid @RequestBody UpdatePasswordReq request) {
+        log.info("用户更新请求: 旧密码={}, 新密码={}", request.getOldPassword(), request.getNewPassword());
+        if(userService.updatePassword(request)){
+            return CommonResp.success();
+        }
+        return CommonResp.error("更改密码失败");
+    }
+
+    @PostMapping("/update/nickname")
+    @Operation(summary = "用户更新", description = "用户更新密码")
+    public CommonResp<?> updateNickName(@Valid @RequestParam String nickname) {
+        log.info("用户更新请求: 新昵称={}",nickname);
+        if(userService.updateNickName(nickname)){
+            return CommonResp.success();
+        }
+        return CommonResp.error("更改昵称失败");
     }
 }
