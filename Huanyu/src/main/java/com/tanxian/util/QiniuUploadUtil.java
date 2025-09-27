@@ -210,4 +210,20 @@ public class QiniuUploadUtil {
             throw new BusinessException(BusinessExceptionEnum.QINIU_DELETE_FAILED);
         }
     }
+
+    public String buildPrivateFileUrl(String fileName, long expireSeconds) {
+        String domain = qiniuConfig.getDomain();
+        if (StrUtil.isBlank(domain)) {
+            throw new BusinessException(BusinessExceptionEnum.QINIU_CONFIG_ERROR);
+        }
+        if (!domain.startsWith("http://") && !domain.startsWith("https://")) {
+            domain = "http://" + domain;
+        }
+        if (!domain.endsWith("/")) {
+            domain += "/";
+        }
+        String baseUrl = domain + fileName;
+        Auth auth = Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey());
+        return auth.privateDownloadUrl(baseUrl, expireSeconds);
+    }
 }

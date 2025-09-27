@@ -62,6 +62,16 @@ public class FileUploadController {
         }
     }
 
+    @GetMapping("/private-url")
+    @Operation(summary = "获取私有空间文件访问链接")
+    public CommonResp<String> getPrivateUrl(
+            @RequestParam("fileName") @NotNull String fileName,
+            @RequestParam(value = "expires", required = false) Long expires) {
+        long exp = (expires == null || expires <= 0) ? 600L : expires; // 默认10分钟
+        String url = qiniuUploadUtil.buildPrivateFileUrl(fileName, exp);
+        return CommonResp.success(url);
+    }
+
     /**
      * 获取文件上传限制信息
      *
