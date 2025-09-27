@@ -13,6 +13,8 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
 /**
  * 此示例演示了：
  * ASR实时识别API调用。
@@ -21,11 +23,17 @@ import org.slf4j.LoggerFactory;
  * 识别耗时计算。
  */
 public class SpeechTranscriberDemo {
-    private String appKey;
+    private static volatile String result;
+    private String appKey,id,secret,url;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberDemo.class);
 
-    public SpeechTranscriberDemo(String appKey, String id, String secret, String url) {
+
+    public SpeechTranscriberDemo() {
+        appKey ="eM6lol9cMryNdqfB";
+        id = "LTAI5tQuhLijAPVnScpCKiPT";
+        secret = "ELs3CmZ5mSsgNTmG1VJnoqrqcrTrgy";
+        url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
         this.appKey = appKey;
         //应用全局创建一个NlsClient实例，默认服务地址为阿里云线上服务地址。
         //获取token，实际使用时注意在accessToken.getExpireTime()过期前再次获取。
@@ -89,6 +97,7 @@ public class SpeechTranscriberDemo {
                         ", begin_time: " + response.getSentenceBeginTime() +
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
+                result+=response.getTransSentenceText();
             }
 
             //识别完毕
@@ -117,7 +126,7 @@ public class SpeechTranscriberDemo {
         return (dataSize * 10 * 8000) / (160 * sampleRate);
     }
 
-    public void process(String filepath) {
+    public String process(String filepath) {
         SpeechTranscriber transcriber = null;
         try {
             //创建实例、建立连接。
@@ -179,6 +188,7 @@ public class SpeechTranscriberDemo {
             if (null != transcriber) {
                 transcriber.close();
             }
+            return result;
         }
     }
 
@@ -186,17 +196,4 @@ public class SpeechTranscriberDemo {
         client.shutdown();
     }
 
-    public static void main(String[] args) throws Exception {
-        String appKey ="eM6lol9cMryNdqfB";
-        String id = "LTAI5tQuhLijAPVnScpCKiPT";
-        String secret = "ELs3CmZ5mSsgNTmG1VJnoqrqcrTrgy";
-        String url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
-
-        //本案例使用本地文件模拟发送实时流数据。您在实际使用时，可以实时采集或接收语音流并发送到ASR服务端。
-        //String filepath = "C:\\Users\\77382\\Desktop\\speaktest\\test.m4a";
-        String filepath = "C:\\Users\\77382\\Desktop\\speaktest\\output.pcm";
-        SpeechTranscriberDemo demo = new SpeechTranscriberDemo(appKey, id, secret, url);
-        demo.process(filepath);
-        demo.shutdown();
-    }
 }

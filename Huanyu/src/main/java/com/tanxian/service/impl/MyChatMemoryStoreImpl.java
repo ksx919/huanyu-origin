@@ -639,4 +639,5 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         private String type;
         private String content;
     }
+
 }
