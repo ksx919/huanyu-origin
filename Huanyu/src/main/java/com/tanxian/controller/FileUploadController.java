@@ -2,8 +2,8 @@ package com.tanxian.controller;
 
 import com.tanxian.common.CommonResp;
 import com.tanxian.common.LoginUserContext;
-import com.tanxian.resp.FileUploadResp;
-import com.tanxian.resp.LoginResp;
+import com.tanxian.resp.UpdateAvatarUrlResp;
+import com.tanxian.service.UserService;
 import com.tanxian.util.QiniuUploadUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -29,6 +29,9 @@ public class FileUploadController {
     @Autowired
     private QiniuUploadUtil qiniuUploadUtil;
 
+    @Autowired
+    private UserService userService;
+
     /**
      * 上传用户头像
      *
@@ -37,7 +40,7 @@ public class FileUploadController {
      */
     @PostMapping("/upload/avatar")
     @Operation(summary = "上传用户头像", description = "支持JPG、PNG等常见图片格式，文件大小不超过10MB")
-    public CommonResp<FileUploadResp> uploadAvatar(
+    public CommonResp<UpdateAvatarUrlResp> uploadAvatar(
             @Parameter(description = "头像文件", required = true)
             @RequestParam("file") @NotNull MultipartFile file) {
         
@@ -47,17 +50,14 @@ public class FileUploadController {
         try {
             // 调用七牛云上传工具类
             String filePath = qiniuUploadUtil.uploadAvatar(file);
-            
-            // 构建响应对象
-            FileUploadResp resp = new FileUploadResp(
-                    filePath,
-                    file.getOriginalFilename(),
-                    file.getSize()
-            );
-            
-            LOG.info("用户头像上传成功，头像上传位置{}", filePath);
 
-            return CommonResp.success(resp);
+            // 数据库存储完整路径名，如 huanyu/avatar/1758945585361_*.png
+            // 上传完成后，直接更新当前JWT用户的头像，并轮换Token
+            UpdateAvatarUrlResp updateResp = userService.updateAvatarUrl(filePath);
+
+            LOG.info("用户头像上传并更新成功，存储路径: {}, 原始文件名: {}", filePath, file.getOriginalFilename());
+
+            return CommonResp.success(updateResp);
             
         } catch (Exception e) {
             LOG.error("用户头像上传失败: {}", e.getMessage(), e);

@@ -25,6 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
+import java.time.Duration;
 
 @Service
 @Slf4j
@@ -120,6 +121,16 @@ public class UserServiceImpl implements UserService {
             user.getNickname(),
             user.getAvatarUrl()
         );
+
+        // 4.1 将token写入Redis并设置TTL为JWT剩余时间
+        try {
+            String tokenKey = getUserTokenRedisKey(user.getId());
+            long ttlMs = JwtUtil.getTokenRemainingTime(token);
+            redisTemplate.opsForValue().set(tokenKey, token, Duration.ofMillis(Math.max(ttlMs, 1000)));
+            log.info("用户登录token已写入Redis: key={}, ttlMs={}", tokenKey, ttlMs);
+        } catch (Exception e) {
+            log.error("写入登录token到Redis失败: userId={}", user.getId(), e);
+        }
         
         log.info("用户登录成功: userId={}, email={}", user.getId(), user.getEmail());
         
@@ -180,7 +191,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public boolean updatePassword(UpdatePasswordReq request) {
+    public LoginResp updatePassword(UpdatePasswordReq request) {
         log.info("用户更新请求: 旧密码={}, 新密码={}", request.getOldPassword(), request.getNewPassword());
 
         // 1. 查找用户
@@ -191,12 +202,11 @@ public class UserServiceImpl implements UserService {
         }
 
         // 2. 校验旧密码是否正确
-        if(PasswordUtil.verifyPassword(request.getOldPassword(), user.getPasswordHash())){
+        if (PasswordUtil.verifyPassword(request.getOldPassword(), user.getPasswordHash())) {
             user.setPasswordHash(PasswordUtil.encryptPassword(request.getNewPassword()));
             userMapper.updateById(user);
-        }
-        else{
-            return false;
+        } else {
+            throw new BusinessException(BusinessExceptionEnum.LOGIN_FAILED);
         }
 
         // 3. 更新最后登录时间
@@ -206,8 +216,43 @@ public class UserServiceImpl implements UserService {
 
         log.info("用户更新密码成功: userId={}", user.getId());
 
-        // 4. 返回更新结果
-        return true;
+        // 4. 轮换JWT：删除Redis中的旧token并生成新token写入Redis
+        try {
+            String tokenKey = getUserTokenRedisKey(user.getId());
+            String oldToken = redisTemplate.opsForValue().get(tokenKey);
+            if (oldToken != null) {
+                redisTemplate.delete(tokenKey);
+                log.info("更新密码删除旧token: key={}", tokenKey);
+            }
+            String newToken = JwtUtil.generateToken(
+                    user.getId(),
+                    user.getEmail(),
+                    user.getNickname(),
+                    user.getAvatarUrl()
+            );
+            long ttlMs = JwtUtil.getTokenRemainingTime(newToken);
+            redisTemplate.opsForValue().set(tokenKey, newToken, Duration.ofMillis(Math.max(ttlMs, 1000)));
+            log.info("更新密码生成新token并写入Redis: key={}, ttlMs={}", tokenKey, ttlMs);
+
+            // 返回新的登录响应
+            return new LoginResp(
+                    user.getId(),
+                    newToken,
+                    user.getEmail(),
+                    user.getNickname(),
+                    user.getAvatarUrl()
+            );
+        } catch (Exception e) {
+            log.error("更新密码时轮换token失败: userId={}", user.getId(), e);
+            // 失败情况下仍返回基本成功但不含新token（极端情况）
+            return new LoginResp(
+                    user.getId(),
+                    null,
+                    user.getEmail(),
+                    user.getNickname(),
+                    user.getAvatarUrl()
+            );
+        }
     }
 
     @Override
@@ -227,12 +272,33 @@ public class UserServiceImpl implements UserService {
         }
         user.setNickname(nickname);
         userMapper.updateById(user);
+
+        // 删除旧token并生成新token
+        String tokenKey = getUserTokenRedisKey(user.getId());
+        try {
+            String oldToken = redisTemplate.opsForValue().get(tokenKey);
+            if (oldToken != null) {
+                redisTemplate.delete(tokenKey);
+                log.info("更新昵称删除旧token: key={}", tokenKey);
+            }
+        } catch (Exception e) {
+            log.error("更新昵称删除旧token失败: userId={}", user.getId(), e);
+        }
+
         String token = JwtUtil.generateToken(
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
                 user.getAvatarUrl()
         );
+
+        try {
+            long ttlMs = JwtUtil.getTokenRemainingTime(token);
+            redisTemplate.opsForValue().set(tokenKey, token, Duration.ofMillis(Math.max(ttlMs, 1000)));
+            log.info("更新昵称生成新token并写入Redis: key={}, ttlMs={}", tokenKey, ttlMs);
+        } catch (Exception e) {
+            log.error("更新昵称写入新token失败: userId={}", user.getId(), e);
+        }
         return new UpdateNickNameResp(
                 user.getId(),
                 nickname,
@@ -248,16 +314,41 @@ public class UserServiceImpl implements UserService {
         User user = userMapper.selectById(LoginUserContext.getId());
         user.setAvatarUrl(avatarUrl);
         userMapper.updateById(user);
+
+        // 删除旧token并生成新token
+        String tokenKey = getUserTokenRedisKey(user.getId());
+        try {
+            String oldToken = redisTemplate.opsForValue().get(tokenKey);
+            if (oldToken != null) {
+                redisTemplate.delete(tokenKey);
+                log.info("更新头像删除旧token: key={}", tokenKey);
+            }
+        } catch (Exception e) {
+            log.error("更新头像删除旧token失败: userId={}", user.getId(), e);
+        }
+
         String token = JwtUtil.generateToken(
                 user.getId(),
                 user.getEmail(),
                 user.getNickname(),
                 user.getAvatarUrl()
         );
+
+        try {
+            long ttlMs = JwtUtil.getTokenRemainingTime(token);
+            redisTemplate.opsForValue().set(tokenKey, token, Duration.ofMillis(Math.max(ttlMs, 1000)));
+            log.info("更新头像生成新token并写入Redis: key={}, ttlMs={}", tokenKey, ttlMs);
+        } catch (Exception e) {
+            log.error("更新头像写入新token失败: userId={}", user.getId(), e);
+        }
         return new UpdateAvatarUrlResp(
                 user.getId(),
                 avatarUrl,
                 token
         );
+    }
+
+    private String getUserTokenRedisKey(Long userId) {
+        return "auth:token:" + userId;
     }
 }

@@ -28,6 +28,8 @@
             <div class="status-light" :class="connectionStatus"></div>
           </div>
 
+          <div v-if="showAuthWarning || !hasToken" class="auth-warning">请先登录以获取令牌</div>
+
           <div class="mode-switcher">
             <button :class="{ active: chatMode === 'voice' }" @click="setChatMode('voice')">实时语音</button>
             <button :class="{ active: chatMode === 'text' }" @click="setChatMode('text')">文字消息</button>
@@ -78,6 +80,7 @@
 <script setup lang="ts">
 import { ref, computed, onUnmounted } from 'vue';
 import gsap from 'gsap';
+import { apiBaseURL, getAuthHeader } from '../utils/axios';
 
 // --- 类型和状态定义 ---
 interface ChatMessage {
@@ -99,6 +102,8 @@ const connectionStatus = ref<'disconnected' | 'connecting' | 'connected' | 'erro
 const isRecording = ref(false); // 在语音模式下，此变量代表通话是否正在进行
 const chatMode = ref<'voice' | 'text'>('voice');
 const textInput = ref('');
+const showAuthWarning = ref(false);
+const hasToken = computed(() => !!localStorage.getItem('token'));
 
 let socket: WebSocket | null = null;
 let audioContext: AudioContext | null = null;
@@ -115,6 +120,7 @@ const currentCharacterAvatar = computed(() => {
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
+  // 后端将根据登录用户与角色类型维护上下文，无需前端 sessionId
   if (chatMode.value === 'voice') {
     startRealtimeVoice();
   }
@@ -159,12 +165,43 @@ const stopRealtimeVoice = () => {
 };
 
 //模式二：文字消息逻辑
-const sendTextMessage = () => {
-  if (!textInput.value.trim()) return;
+const charTypeMap: Record<string, number> = { Xiaogong: 0, Venti: 1, Hutao: 2 };
+const sendTextMessage = async () => {
+  if (!hasToken.value) { showAuthWarning.value = true; return; }
+  if (!textInput.value.trim() || !selectedCharacter.value) return;
   const userMessage = textInput.value;
+  const type = charTypeMap[selectedCharacter.value] ?? 0;
   conversation.value.push({ role: 'user', content: userMessage });
   textInput.value = '';
-  // TODO: 调用后端API发送消息
+
+  // 预先插入一个空的AI消息，用于实时更新内容
+  conversation.value.push({ role: 'ai', content: '' });
+  const aiIndex = conversation.value.length - 1;
+
+  try {
+    const url = `/ai/chat?message=${encodeURIComponent(userMessage)}&type=${type}`;
+    const auth = getAuthHeader();
+    console.log('调用 /ai/chat headers:', auth, 'token:', localStorage.getItem('token'));
+    const resp = await fetch(url, { headers: { ...auth } });
+    if (!resp.ok || !resp.body) {
+      conversation.value[aiIndex].content = '请求失败，稍后重试';
+      return;
+    }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let accumulated = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      accumulated += chunk;
+      conversation.value[aiIndex].content = accumulated;
+    }
+  } catch (e) {
+    conversation.value[aiIndex].content = '网络异常，请稍后重试';
+  }
 };
 const startVoiceToText = async () => {
   isRecording.value = true;
