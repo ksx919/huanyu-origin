@@ -3,6 +3,8 @@ package com.tanxian.service.impl;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
@@ -21,6 +23,7 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
 
     @Autowired
     private ApplicationContext applicationContext;
+    private static final Logger LOG = LoggerFactory.getLogger(PcmAudioWebSocketHandler.class);
     private volatile String sessionId;
     // 存储每个会话对应的SpeechTranscriberTool实例
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -47,12 +50,17 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
             // 2. 解析 JSON 为 JsonNode 对象
             JsonNode jsonNode = objectMapper.readTree(payload);
             String characterName = jsonNode.get("characterId").asText();
-//            int userId = jsonNode.get("userId").asInt();
+            // 从握手拦截器注入的会话属性中获取用户ID
+            Object uidObj = session.getAttributes().get("userId");
+            long userId = 0L;
+            if (uidObj instanceof Number) {
+                userId = ((Number) uidObj).longValue();
+            } else if (uidObj != null) {
+                try { userId = Long.parseLong(String.valueOf(uidObj)); } catch (NumberFormatException ignored) {}
+            }
 
-            int userId = 114514;
-            System.out.println("用户Id:"+userId);
-            System.out.println("原神角色名:"+characterName);
-            sessionId = userId+"";
+            LOG.info("WebSocket消息：用户Id={}, 角色={}", userId, characterName);
+            sessionId = String.valueOf(userId);
             sessionId += switch (characterName) {
                 case "Hutao" -> "2";
                 case "Venti" -> "1";
@@ -68,7 +76,9 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
         // 为每个新连接创建一个新的SpeechTranscriberTool实例
         SpeechTranscriberTool speechTranscriberTool = applicationContext.getBean(SpeechTranscriberTool.class);
         sessionTools.put(session.getId(), speechTranscriberTool);
-        System.out.println("WebSocket 已连接，Session ID: " + session.getId() + "，已创建新的SpeechTranscriberTool实例");
+        Object uidObj = session.getAttributes().get("userId");
+        String nickname = String.valueOf(session.getAttributes().get("nickname"));
+        LOG.info("WebSocket 已连接，Session={}, 用户Id={}, 昵称={}", session.getId(), uidObj, nickname);
     }
 
     @Override
@@ -88,7 +98,7 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
             sessionTools.remove(sessionId);
         }
         
-        System.out.println("WebSocket 已断开，Session ID: " + sessionId + "，已清理SpeechTranscriberTool实例");
+        LOG.info("WebSocket 已断开，Session={}, 已清理SpeechTranscriberTool实例", sessionId);
     }
 
 }

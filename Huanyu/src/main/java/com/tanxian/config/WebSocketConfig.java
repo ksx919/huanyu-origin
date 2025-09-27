@@ -11,14 +11,17 @@ import org.springframework.web.socket.config.annotation.WebSocketHandlerRegistry
 public class WebSocketConfig implements WebSocketConfigurer {
 
     private final PcmAudioWebSocketHandler pcmHandler;
+    private final WebSocketAuthInterceptor authInterceptor;
 
-    public WebSocketConfig(PcmAudioWebSocketHandler pcmHandler) {
+    public WebSocketConfig(PcmAudioWebSocketHandler pcmHandler, WebSocketAuthInterceptor authInterceptor) {
         this.pcmHandler = pcmHandler;
+        this.authInterceptor = authInterceptor;
     }
 
     @Override
     public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {
         registry.addHandler(pcmHandler, "/ws-audio")
+                .addInterceptors(authInterceptor)
                 .setAllowedOrigins("*"); // 生产环境请设置具体域名
     }
 }
