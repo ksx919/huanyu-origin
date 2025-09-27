@@ -29,7 +29,6 @@ public class UserInterceptor implements HandlerInterceptor {
         // 获取Authorization头中的JWT Token
         String authHeader = request.getHeader("Authorization");
         String token = null;
-        System.out.println(authHeader);
         
         // 支持两种Token传递方式：Authorization Bearer 和 直接的token头
         if (StrUtil.isNotBlank(authHeader) && authHeader.startsWith("Bearer ")) {
@@ -52,7 +51,7 @@ public class UserInterceptor implements HandlerInterceptor {
                 response.getWriter().write("{\"code\":403,\"message\":\"JWT Token无效或已过期\"}");
                 return false;
             }
-            
+
             // 从Token中获取用户信息
             Map<String, Object> userInfo = JwtUtil.getUserInfoFromToken(token);
             if (userInfo != null) {
@@ -60,10 +59,30 @@ public class UserInterceptor implements HandlerInterceptor {
                 
                 // 构建LoginResp对象
                 LoginResp loginResp = new LoginResp();
-                loginResp.setId((Long) userInfo.get("userId"));
+                // 兼容不同类型的userId（Integer/Long/String）
+                Object uidObj = userInfo.get("userId");
+                Long uid = null;
+                if (uidObj instanceof Number) {
+                    uid = ((Number) uidObj).longValue();
+                } else if (uidObj instanceof String && !((String) uidObj).isEmpty()) {
+                    try {
+                        uid = Long.parseLong((String) uidObj);
+                    } catch (NumberFormatException ignored) {
+                    }
+                }
+                if (uid == null) {
+                    LOG.warn("JWT中缺少有效的用户ID");
+                    LoginUserContext.setUser(null);
+                    response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                    response.setContentType("application/json;charset=UTF-8");
+                    response.getWriter().write("{\"code\":403,\"message\":\"JWT中缺少用户ID\"}");
+                    return false;
+                }
+                loginResp.setId(uid);
                 loginResp.setToken(token);
                 loginResp.setEmail((String) userInfo.get("email"));
                 loginResp.setNickname((String) userInfo.get("nickname"));
+                loginResp.setAvatarUrl((String) userInfo.get("avatarUrl"));
                 
                 // 设置到线程上下文中
                 LoginUserContext.setUser(loginResp);

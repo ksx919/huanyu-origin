@@ -52,7 +52,7 @@ public class UserServiceImpl implements UserService {
         user.setEmail(registerReq.getEmail());
         user.setPasswordHash(PasswordUtil.encryptPassword(registerReq.getPassword()));
         user.setNickname(registerReq.getNickname());
-        user.setAvatarUrl(registerReq.getAvatarUrl());
+        user.setAvatarUrl("1758945585361_f54ae96b267546fcb4fa2a4db957f98b.png");
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         
@@ -124,7 +124,8 @@ public class UserServiceImpl implements UserService {
             user.getId(),
             token,
             user.getEmail(),
-            user.getNickname()
+            user.getNickname(),
+            user.getAvatarUrl()
         );
     }
     

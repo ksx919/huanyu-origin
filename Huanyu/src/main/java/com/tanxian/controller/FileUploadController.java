@@ -1,7 +1,9 @@
 package com.tanxian.controller;
 
 import com.tanxian.common.CommonResp;
+import com.tanxian.common.LoginUserContext;
 import com.tanxian.resp.FileUploadResp;
+import com.tanxian.resp.LoginResp;
 import com.tanxian.util.QiniuUploadUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -49,7 +51,7 @@ public class FileUploadController {
             // 构建响应对象
             FileUploadResp resp = new FileUploadResp(
                     fileUrl, 
-                    file.getOriginalFilename(), 
+                    file.getOriginalFilename(),
                     file.getSize()
             );
             
@@ -65,8 +67,8 @@ public class FileUploadController {
     @GetMapping("/private-url")
     @Operation(summary = "获取私有空间文件访问链接")
     public CommonResp<String> getPrivateUrl(
-            @RequestParam("fileName") @NotNull String fileName,
             @RequestParam(value = "expires", required = false) Long expires) {
+        String fileName = "huanyu/avatar/"+LoginUserContext.getUser().getAvatarUrl();
         long exp = (expires == null || expires <= 0) ? 600L : expires; // 默认10分钟
         String url = qiniuUploadUtil.buildPrivateFileUrl(fileName, exp);
         return CommonResp.success(url);

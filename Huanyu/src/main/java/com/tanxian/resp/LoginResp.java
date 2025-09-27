@@ -30,4 +30,9 @@ public class LoginResp {
      * 用户昵称
      */
     private String nickname;
+
+    /**
+     * 用户头像
+     */
+    private String avatarUrl;
 }

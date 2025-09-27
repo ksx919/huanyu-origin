@@ -115,19 +115,29 @@ public class JwtUtil {
                     .parseSignedClaims(token)
                     .getPayload();
             
-            // 安全处理可能为null的值
-            Long userId = claims.get("userId", Long.class);
+            // 兼容不同类型的userId（Integer/Long/String）
+            Object userIdObj = claims.get("userId");
+            Long userId = null;
+            if (userIdObj instanceof Number) {
+                userId = ((Number) userIdObj).longValue();
+            } else if (userIdObj instanceof String && !((String) userIdObj).isEmpty()) {
+                try {
+                    userId = Long.parseLong((String) userIdObj);
+                } catch (NumberFormatException ignored) {
+                }
+            }
+
             String email = claims.get("email", String.class);
             String nickname = claims.get("nickname", String.class);
             String avatarUrl = claims.get("avatarUrl", String.class);
-            
-            // 使用HashMap替代Map.of以允许null值
+
+            // 使用HashMap以允许null值，但尽量保证userId被正确转换
             Map<String, Object> userInfo = new java.util.HashMap<>();
             userInfo.put("userId", userId);
             userInfo.put("email", email);
             userInfo.put("nickname", nickname);
             userInfo.put("avatarUrl", avatarUrl);
-            
+
             return userInfo;
         } catch (JwtException | IllegalArgumentException e) {
             log.error("从JWT Token获取用户信息失败: {}", e.getMessage());
