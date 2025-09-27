@@ -21,6 +21,8 @@ public enum BusinessExceptionEnum {
     EMAIL_CODE_REQUIRED("邮箱验证码不能为空"),
     INVALID_LOGIN_TYPE("无效的登录类型"),
     LOGIN_FAILED("登录失败"),
+    NICKNAME_REPEAT("新昵称不能和旧昵称相同"),
+    AVATARURL_REPEAT("新头像不能和原头像相同"),
     
     // JWT Token相关异常
     TOKEN_REQUIRED("请求缺少JWT Token"),

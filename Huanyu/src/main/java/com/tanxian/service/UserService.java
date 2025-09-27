@@ -5,6 +5,8 @@ import com.tanxian.req.RegisterReq;
 import com.tanxian.req.UpdatePasswordReq;
 import com.tanxian.resp.LoginResp;
 import com.tanxian.resp.RegisterResp;
+import com.tanxian.resp.UpdateAvatarUrlResp;
+import com.tanxian.resp.UpdateNickNameResp;
 import jakarta.validation.Valid;
 
 public interface UserService {
@@ -41,5 +43,7 @@ public interface UserService {
 
     boolean updatePassword(UpdatePasswordReq request);
 
-    boolean updateNickName(String nickname);
+    UpdateNickNameResp updateNickName(String nickname);
+
+    UpdateAvatarUrlResp updateAvatarUrl(String avatarUrl);
 }

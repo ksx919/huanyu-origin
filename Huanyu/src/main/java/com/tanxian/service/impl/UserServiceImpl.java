@@ -11,6 +11,8 @@ import com.tanxian.req.RegisterReq;
 import com.tanxian.req.UpdatePasswordReq;
 import com.tanxian.resp.LoginResp;
 import com.tanxian.resp.RegisterResp;
+import com.tanxian.resp.UpdateAvatarUrlResp;
+import com.tanxian.resp.UpdateNickNameResp;
 import com.tanxian.service.UserService;
 import com.tanxian.util.CaptchaUtil;
 import com.tanxian.util.JwtUtil;
@@ -210,7 +212,7 @@ public class UserServiceImpl implements UserService {
 
     @Override
     @Transactional
-    public boolean updateNickName(String nickname) {
+    public UpdateNickNameResp updateNickName(String nickname) {
         log.info("用户更新请求: 新昵称={}",nickname);
         Long userId = LoginUserContext.getId();
         User user = userMapper.selectById(userId);
@@ -220,7 +222,8 @@ public class UserServiceImpl implements UserService {
 
 
         if(user.getNickname().equals(nickname)){
-            return false;
+            log.error("新昵称不能和旧昵称相同");
+            throw new BusinessException(BusinessExceptionEnum.NICKNAME_REPEAT);
         }
         user.setNickname(nickname);
         userMapper.updateById(user);
@@ -230,7 +233,31 @@ public class UserServiceImpl implements UserService {
                 user.getNickname(),
                 user.getAvatarUrl()
         );
-        return true;
+        return new UpdateNickNameResp(
+                user.getId(),
+                nickname,
+                token
+        );
 
+    }
+
+    @Override
+    @Transactional
+    public UpdateAvatarUrlResp updateAvatarUrl(String avatarUrl) {
+        log.info("用户更新请求: 新头像={}",avatarUrl);
+        User user = userMapper.selectById(LoginUserContext.getId());
+        user.setAvatarUrl(avatarUrl);
+        userMapper.updateById(user);
+        String token = JwtUtil.generateToken(
+                user.getId(),
+                user.getEmail(),
+                user.getNickname(),
+                user.getAvatarUrl()
+        );
+        return new UpdateAvatarUrlResp(
+                user.getId(),
+                avatarUrl,
+                token
+        );
     }
 }

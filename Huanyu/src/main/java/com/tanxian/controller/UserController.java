@@ -4,10 +4,8 @@ import com.tanxian.common.CommonResp;
 import com.tanxian.req.LoginReq;
 import com.tanxian.req.RegisterReq;
 import com.tanxian.req.UpdatePasswordReq;
-import com.tanxian.resp.CaptchaResp;
+import com.tanxian.resp.*;
 import com.tanxian.req.EmailCodeReq;
-import com.tanxian.resp.LoginResp;
-import com.tanxian.resp.RegisterResp;
 import com.tanxian.service.CaptchaService;
 import com.tanxian.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -90,12 +88,16 @@ public class UserController {
     }
 
     @PostMapping("/update/nickname")
-    @Operation(summary = "用户更新", description = "用户更新密码")
-    public CommonResp<?> updateNickName(@Valid @RequestParam String nickname) {
+    @Operation(summary = "用户更新", description = "用户更新昵称")
+    public CommonResp<UpdateNickNameResp> updateNickName(@Valid @RequestParam String nickname) {
         log.info("用户更新请求: 新昵称={}",nickname);
-        if(userService.updateNickName(nickname)){
-            return CommonResp.success();
-        }
-        return CommonResp.error("更改昵称失败");
+        return CommonResp.success(userService.updateNickName(nickname));
+    }
+
+    @PostMapping("/update/avatarurl")
+    @Operation(summary = "用户更新", description = "用户更新头像")
+    public CommonResp<UpdateAvatarUrlResp> updateAvatarUrl(@Valid @RequestParam String avatarUrl) {
+        log.info("用户更新请求: 新头像={}",avatarUrl);
+        return CommonResp.success(userService.updateAvatarUrl(avatarUrl));
     }
 }
