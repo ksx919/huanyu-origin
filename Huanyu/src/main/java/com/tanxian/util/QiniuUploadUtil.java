@@ -83,6 +83,157 @@ public class QiniuUploadUtil {
     }
 
     /**
+     * 上传ai合成音频到七牛云
+     *
+     * @param file 上传的文件
+     * @return 文件访问URL
+     */
+    public String uploadAudio(MultipartFile file) {
+        // 1. 参数校验
+        validateFile(file);
+
+        // 2. 生成唯一文件名（使用audio路径前缀）
+        String fileName = generateUniqueFileName(file.getOriginalFilename(), "huanyu/audio/");
+
+        // 3. 构建七牛云配置
+        Configuration cfg = buildConfiguration();
+        UploadManager uploadManager = new UploadManager(cfg);
+
+        // 4. 生成上传凭证
+        Auth auth = Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey());
+        String upToken = auth.uploadToken(qiniuConfig.getBucketName());
+
+        try {
+            // 5. 执行上传
+            Response response = uploadManager.put(file.getBytes(), fileName, upToken);
+
+            if (response.isOK()) {
+                LOG.info("文件上传成功: {}", fileName);
+                return buildFileUrl(fileName);
+            } else {
+                LOG.error("文件上传失败，响应码: {}, 响应体: {}", response.statusCode, response.bodyString());
+                throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+            }
+
+        } catch (QiniuException e) {
+            LOG.error("七牛云上传异常: {}", e.getMessage(), e);
+            throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+        } catch (IOException e) {
+            LOG.error("文件读取异常: {}", e.getMessage(), e);
+            throw new BusinessException(BusinessExceptionEnum.FILE_READ_ERROR);
+        }
+    }
+
+    /**
+     * 直接上传AI合成的音频字节到七牛云（私有空间）
+     * 不进行图片格式校验，统一按 wav 存储到 huanyu/audio/ 前缀下
+     *
+     * @param data 音频字节数据
+     * @return 文件键（例如 huanyu/audio/xxxxx.wav），用于后续生成私有下载链接
+     */
+    public String uploadAudioBytes(byte[] data) {
+        if (data == null || data.length == 0) {
+            throw new BusinessException(BusinessExceptionEnum.FILE_UPLOAD_EMPTY);
+        }
+
+        // 生成唯一的音频文件名，固定使用 wav 扩展名与 huanyu/audio/ 路径前缀
+        String fileName = generateUniqueFileName("audio.wav", "huanyu/audio/");
+
+        // 构建七牛云配置与上传管理器
+        Configuration cfg = buildConfiguration();
+        UploadManager uploadManager = new UploadManager(cfg);
+
+        // 生成上传凭证
+        Auth auth = Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey());
+        String upToken = auth.uploadToken(qiniuConfig.getBucketName());
+
+        try {
+            Response response = uploadManager.put(data, fileName, upToken);
+            if (response.isOK()) {
+                LOG.info("音频字节上传成功: {}", fileName);
+                return buildFileUrl(fileName);
+            } else {
+                LOG.error("音频字节上传失败，响应码: {}, 响应体: {}", response.statusCode, response.bodyString());
+                throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+            }
+        } catch (QiniuException e) {
+            LOG.error("七牛云上传异常: {}", e.getMessage(), e);
+            throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+        }
+    }
+
+    /**
+     * 指定文件键上传AI音频字节（覆盖写入）
+     * @param data 音频字节
+     * @param fileKey 期望的文件键（例如 huanyu/audio/<type>-<sha1>.wav）
+     * @return 文件键（与传入一致）
+     */
+    public String uploadAudioBytesWithKey(byte[] data, String fileKey) {
+        if (data == null || data.length == 0) {
+            throw new BusinessException(BusinessExceptionEnum.FILE_UPLOAD_EMPTY);
+        }
+        if (fileKey == null || fileKey.isBlank()) {
+            throw new BusinessException(BusinessExceptionEnum.PARAM_ERROR);
+        }
+
+        Configuration cfg = buildConfiguration();
+        UploadManager uploadManager = new UploadManager(cfg);
+        Auth auth = Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey());
+        String upToken = auth.uploadToken(qiniuConfig.getBucketName());
+
+        try {
+            Response response = uploadManager.put(data, fileKey, upToken);
+            if (response.isOK()) {
+                LOG.info("音频字节上传成功(指定键): {}", fileKey);
+                return buildFileUrl(fileKey);
+            } else {
+                LOG.error("音频字节上传失败(指定键)，响应码: {}, 响应体: {}", response.statusCode, response.bodyString());
+                throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+            }
+        } catch (QiniuException e) {
+            LOG.error("七牛云上传异常(指定键): {}", e.getMessage(), e);
+            throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+        }
+    }
+
+    /**
+     * 判断文件是否存在
+     */
+    public boolean exists(String fileKey) {
+        try {
+            com.qiniu.storage.BucketManager bucketManager = new com.qiniu.storage.BucketManager(
+                    Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey()),
+                    buildConfiguration()
+            );
+            com.qiniu.storage.model.FileInfo info = bucketManager.stat(qiniuConfig.getBucketName(), fileKey);
+            return info != null;
+        } catch (QiniuException e) {
+            // 612: no such file or directory
+            if (e.code() == 612) {
+                return false;
+            }
+            LOG.error("检查文件存在异常: {}", e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * 设置文件几天后自动删除（需七牛账户开通该能力）
+     */
+    public void setDeleteAfterDays(String fileKey, int days) {
+        try {
+            com.qiniu.storage.BucketManager bucketManager = new com.qiniu.storage.BucketManager(
+                    Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey()),
+                    buildConfiguration()
+            );
+            bucketManager.deleteAfterDays(qiniuConfig.getBucketName(), fileKey, days);
+            LOG.info("设置文件自动删除: key={}, days={}", fileKey, days);
+        } catch (QiniuException e) {
+            LOG.warn("设置自动删除失败或不支持: {}", e.getMessage());
+        }
+    }
+
+    /**
      * 验证上传文件
      *
      * @param file 上传的文件
@@ -118,11 +269,22 @@ public class QiniuUploadUtil {
      * @return 唯一文件名
      */
     private String generateUniqueFileName(String originalFilename) {
+        return generateUniqueFileName(originalFilename, qiniuConfig.getPathPrefix());
+    }
+    
+    /**
+     * 生成唯一文件名
+     *
+     * @param originalFilename 原始文件名
+     * @param pathPrefix 路径前缀
+     * @return 唯一文件名
+     */
+    private String generateUniqueFileName(String originalFilename, String pathPrefix) {
         String extension = getFileExtension(originalFilename);
         String uniqueId = IdUtil.simpleUUID();
         String timestamp = String.valueOf(System.currentTimeMillis());
         
-        return qiniuConfig.getPathPrefix() + timestamp + "_" + uniqueId + "." + extension;
+        return pathPrefix + timestamp + "_" + uniqueId + "." + extension;
     }
 
     /**

@@ -121,17 +121,4 @@ public class UserController {
         log.info("用户更新请求: 新昵称={}",nickname);
         return CommonResp.success(userService.updateNickName(nickname));
     }
-
-    /**
-     * 更新用户头像
-     * 
-     * @param avatarUrl 新头像URL
-     * @return 更新头像响应对象，包含用户ID、新头像URL和新的JWT token
-     */
-    @PostMapping("/update/avatar-url")
-    @Operation(summary = "用户更新", description = "用户更新头像")
-    public CommonResp<UpdateAvatarUrlResp> updateAvatarUrl(@Valid @RequestParam String avatarUrl) {
-        log.info("用户更新请求: 新头像={}",avatarUrl);
-        return CommonResp.success(userService.updateAvatarUrl(avatarUrl));
-    }
 }

@@ -23,6 +23,7 @@ public enum BusinessExceptionEnum {
     LOGIN_FAILED("登录失败"),
     NICKNAME_REPEAT("新昵称不能和旧昵称相同"),
     AVATARURL_REPEAT("新头像不能和原头像相同"),
+    PASSWORD_SAME_AS_OLD("新密码不能与旧密码相同"),
     
     // JWT Token相关异常
     TOKEN_REQUIRED("请求缺少JWT Token"),
@@ -36,7 +37,8 @@ public enum BusinessExceptionEnum {
     QINIU_UPLOAD_FAILED("七牛云上传失败"),
     QINIU_DELETE_FAILED("七牛云删除文件失败"),
     QINIU_CONFIG_ERROR("七牛云配置错误"),
-    FILE_READ_ERROR("文件读取失败");
+    FILE_READ_ERROR("文件读取失败"),
+    PARAM_ERROR("参数异常");
 
     BusinessExceptionEnum(String desc) {
         this.desc = desc;

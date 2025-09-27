@@ -1,132 +1,254 @@
 <template>
-  <div class="profile-container">
+  <div class="profile-page">
+    <div class="profile-card">
+      <div class="avatar-section">
+        <img :src="displayAvatarUrl" alt="User Avatar" class="profile-avatar" @click="triggerAvatarUpload">
+        <input type="file" ref="fileInput" @change="handleAvatarChange" style="display: none" accept="image/*">
+        <div class="avatar-hint">点击头像更换（支持 JPG/PNG ≤10MB）</div>
+      </div>
 
-    <div class="avatar-section">
-      <img :src="authState.avatar || '/default-avatar.png'" alt="User Avatar" class="profile-avatar" @click="triggerAvatarUpload">
-      <input type="file" ref="fileInput" @change="handleAvatarChange" style="display: none" accept="image/*">
-      <div class="avatar-hint">点击头像更换</div>
-    </div>
-
-    <div class="info-section">
-      <div class="info-item">
-        <div v-if="editingField !== 'nickname'" class="info-display" @click="editField('nickname')">
-          <span class="info-text">{{ authState.nickname }}</span>
-          <span class="edit-icon">✏️</span>
+      <div class="info-section">
+        <div class="info-item">
+          <label class="info-label">昵称</label>
+          <div v-if="editingField !== 'nickname'" class="info-display" @click="editField('nickname')">
+            <span class="info-text">{{ authState.nickname }}</span>
+            <span class="edit-icon">✏️</span>
+          </div>
+          <div v-else class="edit-group">
+            <input type="text" v-model="newNickname" class="edit-input" ref="nicknameInput" @keyup.enter="saveNickname" placeholder="输入新昵称">
+            <button @click="saveNickname" class="confirm-btn" :disabled="saving">保存</button>
+          </div>
         </div>
-        <div v-else class="edit-group">
-          <input type="text" v-model="newNickname" class="edit-input" ref="nicknameInput" @keyup.enter="saveNickname">
-          <button @click="saveNickname" class="confirm-btn">确认</button>
+
+        <div class="info-item">
+          <label class="info-label">邮箱</label>
+          <div class="info-display disabled">
+            <span class="info-text">{{ authState.email }}</span>
+          </div>
+        </div>
+
+        <div class="info-item">
+          <label class="info-label">密码</label>
+          <div v-if="!showPasswordForm" class="info-display">
+            <button class="change-password-link" @click="showPasswordForm = true">修改密码</button>
+          </div>
+          <div v-else class="password-form">
+            <input type="password" v-model="oldPassword" class="edit-input" placeholder="当前密码">
+            <input type="password" v-model="newPassword" class="edit-input" placeholder="新密码">
+            <input type="password" v-model="confirmPassword" class="edit-input" placeholder="确认新密码" @keyup.enter="savePassword">
+            <div class="password-actions">
+              <button class="confirm-btn" @click="savePassword" :disabled="saving">确认修改</button>
+              <button class="cancel-btn" @click="resetPasswordForm" :disabled="saving">取消</button>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="info-item">
-        <div class="info-display disabled">
-          <span class="info-text">{{ authState.email }}</span>
-        </div>
-      </div>
-
-      <div class="info-item">
-        <button class="change-password-link">修改密码</button>
+      <div v-if="message" class="message-banner" :class="{ error: messageType==='error', success: messageType==='success' }">
+        {{ message }}
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue';
+import { ref, onMounted, nextTick, computed } from 'vue';
 import { authState } from '../store/auth';
 import http from '../utils/axios';
 
-// 2. 新增状态，用于控制哪个字段正在被编辑
-const editingField = ref<'none' | 'nickname' | 'email'>('none');
+// 编辑状态
+const editingField = ref<'none' | 'nickname'>('none');
+const saving = ref(false);
 
-// 表单数据
+// 昵称表单
 const newNickname = ref('');
-// const newEmail = ref(''); // 如果邮箱可修改，则取消注释
-
-// 用于自动聚焦输入框
 const nicknameInput = ref<HTMLInputElement | null>(null);
 
-// 用于触发隐藏的文件上传框
+// 密码表单
+const showPasswordForm = ref(false);
+const oldPassword = ref('');
+const newPassword = ref('');
+const confirmPassword = ref('');
+
+// 头像上传
 const fileInput = ref<HTMLInputElement | null>(null);
+const userAvatarUrl = ref<string | null>(null); // 私有链接
+const displayAvatarUrl = computed(() => userAvatarUrl.value || authState.avatar || '/default-avatar.png');
+
+// 消息提示
+const message = ref('');
+const messageType = ref<'success' | 'error'>('success');
+let messageTimer: number | null = null;
+
+const showMessage = (text: string, type: 'success' | 'error' = 'success') => {
+  message.value = text;
+  messageType.value = type;
+  if (messageTimer) window.clearTimeout(messageTimer);
+  messageTimer = window.setTimeout(() => { message.value = ''; }, 3000);
+};
+
+// 更新本地token
+const rotateTokenIfPresent = (token?: string | null) => {
+  if (token) {
+    authState.token = token;
+    localStorage.setItem('token', token);
+  }
+};
+
+// 获取用户头像私有链接（默认10分钟）
+const fetchUserAvatarPrivateUrl = async (expires: number = 600) => {
+  try {
+    const resp = await http.get('/file/private-url', { params: { expires } });
+    if (resp.data && resp.data.success) {
+      const url = resp.data.data;
+      if (typeof url === 'string' && url) {
+        userAvatarUrl.value = url;
+      }
+    }
+  } catch (e) {
+    console.warn('获取头像私链失败，将回退使用头像存储路径', e);
+    userAvatarUrl.value = null;
+  }
+};
 
 onMounted(() => {
-  // 组件加载时，用当前用户信息初始化
   newNickname.value = authState.nickname || '';
+  fetchUserAvatarPrivateUrl();
 });
 
-// 3. 进入编辑模式
-const editField = async (field: 'nickname' | 'email') => {
+// 进入编辑昵称
+const editField = async (field: 'nickname') => {
   editingField.value = field;
-  // 使用 nextTick 确保 input 元素已被渲染，然后自动聚焦
   await nextTick();
   if (field === 'nickname' && nicknameInput.value) {
     nicknameInput.value.focus();
   }
 };
 
-// 4. 保存昵称
+// 保存昵称（POST /user/update/nickname，@RequestParam nickname）
 const saveNickname = async () => {
   if (!newNickname.value.trim() || newNickname.value === authState.nickname) {
-    editingField.value = 'none'; // 如果没变化，直接退出编辑模式
+    editingField.value = 'none';
     return;
   }
+  saving.value = true;
   try {
-    const response = await http.post('/user/profile/update', {
-      nickname: newNickname.value,
+    const resp = await http.post('/user/update/nickname', null, {
+      params: { nickname: newNickname.value }
     });
-    if (response.data.success) {
-      // 更新 store 和 localStorage
+    if (resp.data && resp.data.success) {
+      const token = resp.data.data?.token;
+      rotateTokenIfPresent(token);
       authState.updateProfile(newNickname.value, null);
+      showMessage('昵称已更新');
+    } else {
+      showMessage(resp.data?.message || '更新昵称失败', 'error');
     }
-  } catch (error) {
-    console.error("更新昵称失败:", error);
-    newNickname.value = authState.nickname || ''; // 失败时恢复原值
+  } catch (e) {
+    console.error('更新昵称失败:', e);
+    showMessage('更新昵称失败', 'error');
+    newNickname.value = authState.nickname || '';
   } finally {
-    editingField.value = 'none'; // 无论成功失败，都退出编辑模式
+    saving.value = false;
+    editingField.value = 'none';
   }
 };
 
-// 5. 头像上传逻辑
+// 打开文件选择框
 const triggerAvatarUpload = () => {
   fileInput.value?.click();
 };
 
+// 上传头像并刷新私链（POST /file/upload/avatar，form-data: file）
 const handleAvatarChange = async (event: Event) => {
   const target = event.target as HTMLInputElement;
   if (!target.files || target.files.length === 0) return;
-
   const file = target.files[0];
   const formData = new FormData();
-  formData.append('avatarFile', file); // 'avatarFile' 是和后端约定的字段名
-
+  formData.append('file', file);
+  saving.value = true;
   try {
-    const response = await http.post('/user/avatar/upload', formData, { // TODO: 和后端确认API地址
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
+    const resp = await http.post('/file/upload/avatar', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
     });
-    if (response.data.success) {
-      const newAvatarUrl = response.data.data.avatarUrl;
-      // 更新 store 和 localStorage
-      authState.updateProfile(null, newAvatarUrl);
+    if (resp.data && resp.data.success) {
+      const newAvatarStoragePath = resp.data.data?.avatarUrl;
+      const token = resp.data.data?.token;
+      rotateTokenIfPresent(token);
+      authState.updateProfile(null, newAvatarStoragePath || null);
+      await fetchUserAvatarPrivateUrl();
+      showMessage('头像已更新');
+    } else {
+      showMessage(resp.data?.message || '上传头像失败', 'error');
     }
-  } catch (error) {
-    console.error("上传头像失败:", error);
-    alert('头像上传失败！');
+  } catch (e) {
+    console.error('上传头像失败:', e);
+    showMessage('上传头像失败', 'error');
+  } finally {
+    saving.value = false;
+    // 清空文件选择
+    if (fileInput.value) fileInput.value.value = '' as any;
   }
+};
+
+// 保存密码（POST /user/update/password，JSON {oldPassword,newPassword}）
+const savePassword = async () => {
+  if (!oldPassword.value || !newPassword.value) {
+    showMessage('请输入当前密码和新密码', 'error');
+    return;
+  }
+  if (newPassword.value !== confirmPassword.value) {
+    showMessage('两次输入的新密码不一致', 'error');
+    return;
+  }
+  saving.value = true;
+  try {
+    const resp = await http.post('/user/update/password', {
+      oldPassword: oldPassword.value,
+      newPassword: newPassword.value,
+    });
+    if (resp.data && resp.data.success) {
+      const token = resp.data.data?.token;
+      rotateTokenIfPresent(token);
+      showMessage('密码已更新，请妥善保管');
+      resetPasswordForm();
+    } else {
+      showMessage(resp.data?.message || '更新密码失败', 'error');
+    }
+  } catch (e) {
+    console.error('更新密码失败:', e);
+    showMessage('更新密码失败', 'error');
+  } finally {
+    saving.value = false;
+  }
+};
+
+const resetPasswordForm = () => {
+  showPasswordForm.value = false;
+  oldPassword.value = '';
+  newPassword.value = '';
+  confirmPassword.value = '';
 };
 </script>
 
 <style scoped>
-/* 6. 全新的样式，实现你的设计 */
-.profile-container {
+.profile-page {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 50px;
   width: 100%;
-  max-width: 600px;
+}
+
+.profile-card {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 30px;
+  width: 100%;
+  max-width: 800px;
+  padding: 24px;
+  border-radius: 16px;
+  background: var(--bg-dark-glass);
+  backdrop-filter: blur(6px);
 }
 
 .avatar-section {
@@ -148,46 +270,49 @@ const handleAvatarChange = async (event: Event) => {
 }
 
 .avatar-hint {
-  font-size: 14px;
+  font-size: 13px;
   color: rgba(255, 255, 255, 0.7);
-  margin-top: 10px;
+  margin-top: 8px;
 }
 
 .info-section {
   display: flex;
   flex-direction: column;
-  gap: 25px;
+  gap: 18px;
 }
 
 .info-item {
-  height: 45px; /* 固定高度防止切换时跳动 */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.info-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .info-display {
   display: flex;
   align-items: center;
-  cursor: pointer;
-  padding: 10px 5px;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background-color: rgba(255, 255, 255, 0.06);
 }
 
 .info-display.disabled {
-  cursor: not-allowed;
-  opacity: 0.7;
+  cursor: default;
 }
 
 .info-text {
-  font-size: 22px;
+  font-size: 18px;
   color: white;
 }
 
 .edit-icon {
   margin-left: 15px;
-  opacity: 0;
-  transition: opacity 0.3s;
-}
-
-.info-display:hover .edit-icon {
-  opacity: 1;
+  opacity: 0.6;
 }
 
 .edit-group {
@@ -197,23 +322,49 @@ const handleAvatarChange = async (event: Event) => {
 }
 
 .edit-input {
-  width: 200px;
-  height: 45px;
-  padding: 0 15px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  background-color: rgba(0, 0, 0, 0.2);
+  width: 260px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background-color: rgba(255, 255, 255, 0.08);
   color: white;
-  font-size: 18px;
+  font-size: 16px;
   box-sizing: border-box;
 }
 
+.password-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.password-actions {
+  grid-column: span 2;
+  display: flex;
+  gap: 10px;
+}
+
 .confirm-btn {
-  height: 45px;
-  padding: 0 15px;
-  border-radius: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
   border: none;
   background-color: #007bff;
+  color: white;
+  cursor: pointer;
+}
+.confirm-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.cancel-btn {
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background-color: rgba(255, 255, 255, 0.08);
   color: white;
   cursor: pointer;
 }
@@ -221,9 +372,24 @@ const handleAvatarChange = async (event: Event) => {
 .change-password-link {
   background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.8);
+  color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 14px;
   text-decoration: underline;
+}
+
+.message-banner {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+}
+.message-banner.success {
+  background: rgba(0, 128, 0, 0.2);
+  color: #b0ffb0;
+}
+.message-banner.error {
+  background: rgba(128, 0, 0, 0.2);
+  color: #ffb0b0;
 }
 </style>

@@ -54,6 +54,8 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
 
     // 系统消息模板缓存（从本地文件加载）
     private final Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
+    // 标记不需要持久化到数据库的会话（例如语音通话会话）
+    private final Set<String> ephemeralSessions = ConcurrentHashMap.newKeySet();
 
     // 标记是否已初始化
     private volatile boolean initialized = false;
@@ -274,12 +276,40 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             redisTemplate.opsForValue().set(redisKey, json, Duration.ofDays(1));
             log.info("已更新Redis缓存");
             
-            // 完整存储所有消息到数据库（不受内存窗口限制）
-            storeAllMessagesToDatabase(sessionId, nonSystemMessages);
+            // 若为短暂会话（语音通话），跳过数据库持久化
+            if (isEphemeralSession(sessionId)) {
+                log.info("会话 {} 标记为临时（语音通话），跳过数据库存储", sessionId);
+            } else {
+                // 完整存储所有消息到数据库（不受内存窗口限制）
+                storeAllMessagesToDatabase(sessionId, nonSystemMessages);
+            }
             
         } catch (Exception e) {
             log.error("更新会话消息失败，sessionId: {}", sessionId, e);
         }
+    }
+
+    /**
+     * 标记某个会话为临时（不入库）
+     */
+    public void markEphemeralSession(String sessionId) {
+        ephemeralSessions.add(sessionId);
+        log.info("已标记临时会话，不入库: {}", sessionId);
+    }
+
+    /**
+     * 取消临时标记
+     */
+    public void unmarkEphemeralSession(String sessionId) {
+        ephemeralSessions.remove(sessionId);
+        log.info("已取消临时会话标记: {}", sessionId);
+    }
+
+    /**
+     * 判断是否为临时会话
+     */
+    public boolean isEphemeralSession(String sessionId) {
+        return ephemeralSessions.contains(sessionId);
     }
 
     @Override

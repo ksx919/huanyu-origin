@@ -60,6 +60,8 @@ public class SpeechTranscriberTool {
     private final ObjectMapper objectMapper = new ObjectMapper();
     // Ensure websocket writes are serialized per session
     private final ExecutorService sendExecutor = Executors.newSingleThreadExecutor();
+    // Interrupt flag for stopping current TTS audio streaming
+    private volatile boolean stopAudioStreaming = false;
 
     public SpeechTranscriberTool() {
         cnt=0;
@@ -228,6 +230,7 @@ public class SpeechTranscriberTool {
             byte[] buf = new byte[4096];
             int read;
             while ((read = is.read(buf)) != -1) {
+                if (stopAudioStreaming) break;
                 byte[] chunk = new byte[read];
                 System.arraycopy(buf, 0, chunk, 0, read);
                 // serialize binary writes via executor
@@ -244,6 +247,7 @@ public class SpeechTranscriberTool {
             Map<String, Object> end = new HashMap<>();
             end.put("type", "audio_end");
             safeSendText(session, end);
+            stopAudioStreaming = false;
         } catch (Exception e) {
             logger.error("TTS streaming failed", e);
             Map<String, Object> err = new HashMap<>();
@@ -251,6 +255,13 @@ public class SpeechTranscriberTool {
             err.put("message", String.valueOf(e.getMessage()));
             safeSendText(session, err);
         }
+    }
+
+    /**
+     * Interrupt current AI speech playback. Does not stop ASR recording.
+     */
+    public void interrupt() {
+        stopAudioStreaming = true;
     }
 
     //根据二进制数据大小计算对应的同等语音长度。
@@ -275,7 +286,7 @@ public class SpeechTranscriberTool {
             //是否返回中间识别结果。
             transcriber.setEnableIntermediateResult(false);
             //是否生成并返回标点符号。
-            transcriber.setEnablePunctuation(false);
+            transcriber.setEnablePunctuation(true);
             //是否将返回结果规整化，比如将一百返回为100。
             transcriber.setEnableITN(false);
 
@@ -341,7 +352,7 @@ public class SpeechTranscriberTool {
                 //是否返回中间识别结果。
                 transcriber.setEnableIntermediateResult(false);
                 //是否生成并返回标点符号。
-                transcriber.setEnablePunctuation(false);
+                transcriber.setEnablePunctuation(true);
                 //是否将返回结果规整化，比如将一百返回为100。
                 transcriber.setEnableITN(false);
 

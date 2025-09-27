@@ -129,6 +129,8 @@ public class SpeechTranscriberDemo {
     public String process(String filepath) {
         SpeechTranscriber transcriber = null;
         try {
+            // 每次处理前重置累计结果，避免出现 "null" 前缀
+            result = "";
             //创建实例、建立连接。
             transcriber = new SpeechTranscriber(client, getTranscriberListener());
             transcriber.setAppKey(appKey);
@@ -139,7 +141,7 @@ public class SpeechTranscriberDemo {
             //是否返回中间识别结果。
             transcriber.setEnableIntermediateResult(false);
             //是否生成并返回标点符号。
-            transcriber.setEnablePunctuation(false);
+            transcriber.setEnablePunctuation(true);
             //是否将返回结果规整化，比如将一百返回为100。
             transcriber.setEnableITN(false);
 
@@ -166,6 +168,13 @@ public class SpeechTranscriberDemo {
 
             File file = new File(filepath);
             FileInputStream fis = new FileInputStream(file);
+            // 跳过 WAV 头（本项目前端生成的 WAV 为 44 字节头）
+            long header = 44;
+            while (header > 0) {
+                long skipped = fis.skip(header);
+                if (skipped <= 0) break;
+                header -= skipped;
+            }
             byte[] b = new byte[3200];
             int len;
             while ((len = fis.read(b)) > 0) {

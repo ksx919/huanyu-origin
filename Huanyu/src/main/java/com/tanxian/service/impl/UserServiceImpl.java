@@ -202,21 +202,27 @@ public class UserServiceImpl implements UserService {
         }
 
         // 2. 校验旧密码是否正确
-        if (PasswordUtil.verifyPassword(request.getOldPassword(), user.getPasswordHash())) {
-            user.setPasswordHash(PasswordUtil.encryptPassword(request.getNewPassword()));
-            userMapper.updateById(user);
-        } else {
+        if (!PasswordUtil.verifyPassword(request.getOldPassword(), user.getPasswordHash())) {
             throw new BusinessException(BusinessExceptionEnum.LOGIN_FAILED);
         }
 
-        // 3. 更新最后登录时间
+        // 3. 校验旧密码和新密码不能相同
+        if (request.getOldPassword().equals(request.getNewPassword())) {
+            throw new BusinessException(BusinessExceptionEnum.PASSWORD_SAME_AS_OLD);
+        }
+
+        // 4. 更新密码
+        user.setPasswordHash(PasswordUtil.encryptPassword(request.getNewPassword()));
+        userMapper.updateById(user);
+
+        // 5. 更新最后登录时间
         LocalDateTime now = LocalDateTime.now();
         userMapper.updateLastLoginTime(user.getId(), now);
         user.setLastLoginAt(now);
 
         log.info("用户更新密码成功: userId={}", user.getId());
 
-        // 4. 轮换JWT：删除Redis中的旧token并生成新token写入Redis
+        // 6. 轮换JWT：删除Redis中的旧token并生成新token写入Redis
         try {
             String tokenKey = getUserTokenRedisKey(user.getId());
             String oldToken = redisTemplate.opsForValue().get(tokenKey);

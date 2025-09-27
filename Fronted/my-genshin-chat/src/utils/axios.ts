@@ -1,8 +1,10 @@
 import axios from 'axios';
 
-// 使用 Vite 环境变量配置后端基础地址
-// 默认为 http://localhost:8000
-const baseURL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+// 在开发环境下，使用同源相对路径，交由 Vite 代理转发，避免跨域预检与双请求失败
+// 在生产环境下，使用环境变量配置的后端基础地址
+const baseURL = import.meta.env.DEV
+  ? '/'
+  : (import.meta.env.VITE_API_BASE_URL || '/');
 
 const http = axios.create({
   baseURL,

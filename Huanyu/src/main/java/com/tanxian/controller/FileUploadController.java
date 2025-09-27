@@ -48,6 +48,16 @@ public class FileUploadController {
                 file.getOriginalFilename(), file.getSize());
 
         try {
+            // 记录旧头像文件键（来自当前JWT上下文）
+            String oldFileKey = null;
+            try {
+                if (LoginUserContext.getUser() != null) {
+                    oldFileKey = LoginUserContext.getUser().getAvatarUrl();
+                }
+            } catch (Exception ignore) {
+                // 若上下文不可用，不影响上传流程
+            }
+
             // 调用七牛云上传工具类
             String filePath = qiniuUploadUtil.uploadAvatar(file);
 
@@ -56,6 +66,27 @@ public class FileUploadController {
             UpdateAvatarUrlResp updateResp = userService.updateAvatarUrl(filePath);
 
             LOG.info("用户头像上传并更新成功，存储路径: {}, 原始文件名: {}", filePath, file.getOriginalFilename());
+
+            // 尝试删除旧头像（若存在且与新头像不同）——容错处理，不影响主流程
+            try {
+                if (oldFileKey != null && !oldFileKey.isBlank() && !oldFileKey.equals(filePath)) {
+                    boolean existed = false;
+                    try {
+                        existed = qiniuUploadUtil.exists(oldFileKey);
+                    } catch (Exception e) {
+                        // 存在性检查失败也不阻塞删除尝试
+                        LOG.debug("检查旧头像是否存在失败，继续尝试删除: {}", oldFileKey);
+                    }
+                    if (!existed) {
+                        LOG.info("旧头像不存在或已被删除: {}", oldFileKey);
+                    } else {
+                        boolean ok = qiniuUploadUtil.deleteFile(oldFileKey);
+                        LOG.info("旧头像删除结果: key={}, ok={}", oldFileKey, ok);
+                    }
+                }
+            } catch (Exception delEx) {
+                LOG.warn("旧头像删除失败，不影响新头像使用: key={}, err={}", oldFileKey, delEx.getMessage());
+            }
 
             return CommonResp.success(updateResp);
             
@@ -75,6 +106,16 @@ public class FileUploadController {
         return CommonResp.success(url);
     }
 
+    @GetMapping("/private-url-by-key")
+    @Operation(summary = "按文件键生成私有链接", description = "传入文件键（如huanyu/audio/xxx.wav）生成私有下载链接")
+    public CommonResp<String> getPrivateUrlByKey(
+            @RequestParam(value = "fileName") String fileName,
+            @RequestParam(value = "expires", required = false) Long expires) {
+        long exp = (expires == null || expires <= 0) ? 3600L : expires; // 默认1小时
+        String url = qiniuUploadUtil.buildPrivateFileUrl(fileName, exp);
+        return CommonResp.success(url);
+    }
+
     /**
      * 获取文件上传限制信息
      *
@@ -88,5 +129,17 @@ public class FileUploadController {
             public final long maxFileSize = 10 * 1024 * 1024; // 10MB
             public final String maxFileSizeDesc = "10MB";
         });
+    }
+
+    @GetMapping("/exists")
+    @Operation(summary = "检查文件是否存在", description = "根据文件键检查七牛云是否存在该文件")
+    public CommonResp<Boolean> exists(@RequestParam("fileName") String fileName) {
+        try {
+            boolean ok = qiniuUploadUtil.exists(fileName);
+            return CommonResp.success(ok);
+        } catch (Exception e) {
+            LOG.error("检查文件存在失败", e);
+            return CommonResp.success(false);
+        }
     }
 }

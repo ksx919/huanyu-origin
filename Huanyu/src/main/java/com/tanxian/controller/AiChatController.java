@@ -1,18 +1,18 @@
 package com.tanxian.controller;
 
 import com.tanxian.common.LoginUserContext;
+import com.tanxian.resp.ChatMessageResp;
 import com.tanxian.service.AiChatService;
-import com.tanxian.service.MyChatMemoryStore;
-import com.tanxian.service.impl.AiChatServiceImpl;
-import com.tanxian.service.impl.MyChatMemoryStoreImpl;
+import com.tanxian.service.ChatMessageService;
+import io.lettuce.core.dynamic.annotation.Param;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.client.RestTemplate;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -27,7 +27,7 @@ public class AiChatController {
 
 
     @Autowired
-    private MyChatMemoryStore myChatMemoryStore;
+    private ChatMessageService chatMessageService;
 
 
     @GetMapping(value = "/chat" ,produces = "text/html;charset=utf-8")
@@ -39,10 +39,10 @@ public class AiChatController {
         return aiChatService.chat(sessionId,message,type);
     }
 
-    //根据sessionId获取聊天记录
-    @GetMapping("/getChat")
+    @GetMapping("/get-chat")
     @Operation(summary = "获取聊天记录", description = "根据指定的会话ID获取聊天记录")
-    public List<MyChatMemoryStoreImpl.SerializableChatMessage> getMessage(String sessionId){
-        return myChatMemoryStore.getSerializableMessages(sessionId);
+    public List<ChatMessageResp> getMessage(@RequestParam @Param("type") short type){
+        String sessionId = LoginUserContext.getId()+""+type;
+        return chatMessageService.getContentsBySessionId(sessionId);
     }
 }

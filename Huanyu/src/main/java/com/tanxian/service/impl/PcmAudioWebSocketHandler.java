@@ -23,11 +23,14 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
 
     @Autowired
     private ApplicationContext applicationContext;
+    @Autowired
+    private MyChatMemoryStoreImpl memoryStore;
     private static final Logger LOG = LoggerFactory.getLogger(PcmAudioWebSocketHandler.class);
     private volatile String sessionId;
     // 存储每个会话对应的SpeechTranscriberTool实例
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final Map<String, SpeechTranscriberTool> sessionTools = new ConcurrentHashMap<>();
+    private final Map<String, String> voiceSessionIds = new ConcurrentHashMap<>();
     // 重点：处理客户端发来的二进制消息
     @Override
     public void handleMessage(WebSocketSession session, WebSocketMessage<?> message) throws Exception {
@@ -49,6 +52,14 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
 
             // 2. 解析 JSON 为 JsonNode 对象
             JsonNode jsonNode = objectMapper.readTree(payload);
+            // 先处理打断逻辑
+            if (jsonNode.has("type") && "interrupt".equals(jsonNode.get("type").asText())) {
+                SpeechTranscriberTool speechTranscriberTool = sessionTools.get(session.getId());
+                if (speechTranscriberTool != null) {
+                    speechTranscriberTool.interrupt();
+                }
+                return;
+            }
             String characterName = jsonNode.get("characterId").asText();
             // 从握手拦截器注入的会话属性中获取用户ID
             Object uidObj = session.getAttributes().get("userId");
@@ -67,6 +78,10 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
                 case "Xiaogong" -> "0";
                 default -> "unknown";
             };
+            // 标记该会话为临时（语音通话），避免消息入库
+            memoryStore.markEphemeralSession(sessionId);
+            // 记录映射，方便断开连接时取消标记
+            voiceSessionIds.put(session.getId(), sessionId);
         }
     }
 
@@ -85,8 +100,13 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
 
     @Override
     public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) throws Exception {
-        String sessionId = session.getId();
-        SpeechTranscriberTool speechTranscriberTool = sessionTools.get(sessionId);
+        String webSocketId = session.getId();
+        SpeechTranscriberTool speechTranscriberTool = sessionTools.get(webSocketId);
+        // 取消临时会话标记
+        String ephemeralSessionId = voiceSessionIds.remove(webSocketId);
+        if (ephemeralSessionId != null) {
+            memoryStore.unmarkEphemeralSession(ephemeralSessionId);
+        }
         
         if (speechTranscriberTool != null) {
             // 清理资源
@@ -97,10 +117,10 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
             // 调用shutdown方法清理NlsClient
             speechTranscriberTool.shutdown();
             // 从映射中移除
-            sessionTools.remove(sessionId);
+            sessionTools.remove(webSocketId);
         }
         
-        LOG.info("WebSocket 已断开，Session={}, 已清理SpeechTranscriberTool实例", sessionId);
+        LOG.info("WebSocket 已断开，Session={}, 已清理SpeechTranscriberTool实例", webSocketId);
     }
 
 }
