@@ -1,5 +1,8 @@
 <template>
   <div class="form-wrapper">
+    <div class="dev-actions">
+      <button @click="fakeLogin" class="dev-btn">【开发用】一键登录</button>
+    </div>
     <div class="mode-switcher">
       <button :class="{ active: mode === 'login' }" @click="setMode('login')">登录</button>
       <button :class="{ active: mode === 'register' }" @click="setMode('register')">注册</button>
@@ -81,6 +84,20 @@ const isLoggingIn = ref(false);
 const isRegistering = ref(false);
 
 const router = useRouter();
+
+const fakeLogin = () => {
+  console.log("执行开发者模拟登录...");
+  // 模拟从后端获取的数据
+  const fakeToken = 'dev-fake-token-1234567890';
+  const fakeNickname = '开发者';
+  const fakeAvatar = null; // 或者一个图片URL
+
+  // 手动调用我们 store 里的 login 方法
+  authState.login(fakeToken, fakeNickname, fakeAvatar);
+
+  // 手动跳转到主页
+  router.push('/');
+};
 
 //通用函数
 const getGraphicCaptcha = async () => {

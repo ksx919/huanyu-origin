@@ -7,26 +7,12 @@
   </div>
 
   <div class="main-container">
-
     <div v-if="!selectedCharacter" class="selection-screen">
       <transition appear @before-enter="beforeTitleEnter" @enter="enterTitle">
         <h1>选择你的对话对象</h1>
       </transition>
-
-      <TransitionGroup
-          appear
-          tag="div"
-          class="char-selector"
-          @before-enter="beforeCharEnter"
-          @enter="enterChar"
-      >
-        <div
-            v-for="(char, index) in characters"
-            :key="char.id"
-            class="char-card"
-            @click="selectCharacter(char.id)"
-            :data-index="index"
-        >
+      <TransitionGroup appear tag="div" class="char-selector" @before-enter="beforeCharEnter" @enter="enterChar">
+        <div v-for="(char, index) in characters" :key="char.id" class="char-card" @click="selectCharacter(char.id)" :data-index="index">
           <img :src="char.avatar" :alt="char.name" class="char-avatar">
           <span class="char-name">{{ char.name }}</span>
         </div>
@@ -36,40 +22,56 @@
     <div v-else class="chat-screen">
       <Transition name="chatbox-transform" appear>
         <div class="chat-wrapper">
-
           <div class="chat-header">
             <button @click="deselectCharacter" class="back-button">&lt; 返回</button>
             <h3>正在与 {{ getCharacterName(selectedCharacter) }} 对话</h3>
             <div class="status-light" :class="connectionStatus"></div>
           </div>
 
+          <div class="mode-switcher">
+            <button :class="{ active: chatMode === 'voice' }" @click="setChatMode('voice')">实时语音</button>
+            <button :class="{ active: chatMode === 'text' }" @click="setChatMode('text')">文字消息</button>
+          </div>
+
           <div class="chat-window">
-            <div v-for="(msg, index) in conversation" :key="index" :class="msg.role">
-              <strong>{{ msg.role === 'user' ? '你' : getCharacterName(selectedCharacter) }}:</strong>
-              {{ msg.content }}
+            <div v-if="chatMode === 'voice'" class="voice-avatar-container">
+              <img :src="currentCharacterAvatar" class="voice-avatar" alt="Character Avatar"/>
             </div>
+
+            <template v-if="chatMode === 'text'">
+              <div v-for="(msg, index) in conversation" :key="index" :class="msg.role">
+                <strong>{{ msg.role === 'user' ? '你' : getCharacterName(selectedCharacter) }}:</strong>
+                {{ msg.content }}
+                <button v-if="msg.role === 'ai' && msg.audioUrl" @click="playAudio(msg.audioUrl)" class="play-audio-btn">▶️</button>
+              </div>
+            </template>
+
             <div v-if="conversation.length === 0" class="empty-chat">
-              可以开始对话了！
+              {{ chatMode === 'voice' ? '正在进行实时语音通话...' : '可以开始发送消息了！' }}
             </div>
           </div>
 
           <div class="controls">
-            <button
-                class="record-btn"
-                @mousedown="startRecording"
-                @mouseup="stopRecording"
-                @mouseleave="stopRecording"
-                :disabled="!selectedCharacter || isRecording"
-                :class="{ recording: isRecording }"
-            >
-              {{ getRecordButtonText() }}
-            </button>
-          </div>
+            <div v-if="chatMode === 'voice'" class="voice-controls">
+              <button class="record-btn end-call" @click="stopRealtimeVoice">
+                结束对话
+              </button>
+            </div>
 
+            <div v-else class="text-controls">
+              <input
+                  type="text"
+                  v-model="textInput"
+                  @keyup.enter="sendTextMessage"
+                  placeholder="输入消息..."
+              />
+              <button @click="sendTextMessage" class="send-btn">发送</button>
+              <button @mousedown="startVoiceToText" @mouseup="stopVoiceToText" class="voice-to-text-btn" :class="{ recording: isRecording }">🎤</button>
+            </div>
+          </div>
         </div>
       </Transition>
     </div>
-
   </div>
 </template>
 
@@ -77,11 +79,12 @@
 import { ref, computed, onUnmounted } from 'vue';
 import gsap from 'gsap';
 
-// 类型定义
+// --- 类型和状态定义 ---
 interface ChatMessage {
   role: 'user' | 'ai';
   content: string;
   timestamp?: number;
+  audioUrl?: string;
 }
 
 const characters = ref([
@@ -90,155 +93,108 @@ const characters = ref([
   { id: 'Xiaogong', name: '宵宫', avatar: '/Xiaogong.jpg' }
 ]);
 
-// 响应式数据
 const selectedCharacter = ref<string | null>(null);
-const isRecording = ref(false);
 const conversation = ref<ChatMessage[]>([]);
 const connectionStatus = ref<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+const isRecording = ref(false); // 在语音模式下，此变量代表通话是否正在进行
+const chatMode = ref<'voice' | 'text'>('voice');
+const textInput = ref('');
 
-// WebSocket 和录音相关变量
 let socket: WebSocket | null = null;
 let audioContext: AudioContext | null = null;
 let mediaStream: MediaStream | null = null;
 let audioWorkletNode: AudioWorkletNode | null = null;
+let audioPlayer = new Audio();
 
-// WebSocket 连接函数 (返回 Promise)
-const connectWebSocket = () => {
-  return new Promise<void>((resolve, reject) => {
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      resolve();
-      return;
-    }
+// --- 计算属性 ---
+const currentCharacterAvatar = computed(() => {
+  return characters.value.find(c => c.id === selectedCharacter.value)?.avatar || '';
+});
 
-    connectionStatus.value = 'connecting';
-    const backendUrl = 'ws://localhost:8000/ws-audio';
-
-    try {
-      socket = new WebSocket(backendUrl);
-      socket.binaryType = "arraybuffer";
-
-      socket.onopen = () => {
-        console.log('WebSocket 连接已建立');
-        connectionStatus.value = 'connected';
-
-        if (selectedCharacter.value) {
-          socket!.send(JSON.stringify({
-            type: 'character_select',
-            characterId: selectedCharacter.value
-          }));
-        }
-        resolve();
-      };
-
-      socket.onmessage = (event) => {
-        if (conversation.value.length > 0 && conversation.value[conversation.value.length - 1].role === 'user') {
-          if (conversation.value[conversation.value.length - 1].content === '（语音输入，等待识别...）') {
-            conversation.value[conversation.value.length - 1].content = '（语音输入已识别）';
-          }
-        }
-        conversation.value.push({
-          role: 'ai',
-          content: event.data,
-          timestamp: Date.now()
-        });
-      };
-
-      socket.onerror = (error) => {
-        console.error('WebSocket 错误:', error);
-        connectionStatus.value = 'error';
-        reject(error);
-      };
-
-      socket.onclose = (event) => {
-        console.log('WebSocket 连接已关闭', event.code, event.reason);
-        if (connectionStatus.value === 'connecting') {
-          reject(new Error(`连接关闭，请检查后端服务是否开启。 Code: ${event.code}`));
-        }
-        connectionStatus.value = 'disconnected';
-        socket = null;
-      };
-    } catch (error) {
-      console.error('创建 WebSocket 失败:', error);
-      connectionStatus.value = 'error';
-      reject(error);
-    }
-  });
-};
-
-// 角色选择逻辑
+// --- 核心逻辑 ---
 const selectCharacter = (charId: string) => {
   selectedCharacter.value = charId;
   conversation.value = [];
+  if (chatMode.value === 'voice') {
+    startRealtimeVoice();
+  }
 };
 
 const deselectCharacter = () => {
   selectedCharacter.value = null;
   conversation.value = [];
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    socket.close(1000, '用户返回选择界面');
+  disconnectWebSocket();
+};
+
+const setChatMode = (mode: 'voice' | 'text') => {
+  if (chatMode.value === mode) return;
+
+  chatMode.value = mode;
+  disconnectWebSocket();
+  conversation.value = [];
+
+  if (mode === 'voice' && selectedCharacter.value) {
+    startRealtimeVoice();
   }
 };
 
-const startRecording = async () => {
+const playAudio = (url: string) => {
+  audioPlayer.src = url;
+  audioPlayer.play();
+};
+
+//模式一：实时语音逻辑
+const startRealtimeVoice = async () => {
   if (isRecording.value) return;
-
-  try {
-    await connectWebSocket();
-
-    isRecording.value = true;
-
-    mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-    await audioContext.audioWorklet.addModule('/audio-processor.js');
-    audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-    const source = audioContext.createMediaStreamSource(mediaStream);
-    source.connect(audioWorkletNode);
-    audioWorkletNode.connect(audioContext.destination);
-
-    audioWorkletNode.port.onmessage = (event) => {
-      if (event.data.type === 'audioData' && socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(event.data.data);
-      }
-    };
-
-    conversation.value.push({
-      role: 'user',
-      content: '（语音输入，等待识别...）',
-      timestamp: Date.now()
-    });
-    console.log('录音已开始');
-
-  } catch (error) {
-    console.error('录音或连接失败:', error);
-    alert('无法访问麦克风或连接服务器，请检查权限和网络');
-    stopRecording();
-  }
+  console.log('实时语音模式：自动开始连接...');
+  isRecording.value = true;
+  connectionStatus.value = 'connected'; // 模拟
+  // TODO: 在这里添加获取麦克风和发送音频流的逻辑
 };
 
-const stopRecording = () => {
-  if (!isRecording.value && !mediaStream) return;
+const stopRealtimeVoice = () => {
+  if (!isRecording.value) return;
+  console.log('实时语音模式：用户点击结束对话');
+  disconnectWebSocket();
+};
+
+//模式二：文字消息逻辑
+const sendTextMessage = () => {
+  if (!textInput.value.trim()) return;
+  const userMessage = textInput.value;
+  conversation.value.push({ role: 'user', content: userMessage });
+  textInput.value = '';
+  // TODO: 调用后端API发送消息
+};
+const startVoiceToText = async () => {
+  isRecording.value = true;
+  console.log('文字模式：开始录音...');
+  // TODO: 开始录音逻辑
+};
+const stopVoiceToText = () => {
+  isRecording.value = false;
+  console.log('文字模式：停止录音...');
+  // TODO: 停止录音并发送后端识别
+};
+
+//通用和辅助函数
+const disconnectWebSocket = () => {
+  if (socket) socket.close();
+  socket = null;
+
+  if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+  mediaStream = null;
+
+  if (audioContext && audioContext.state !== 'closed') audioContext.close();
+  audioContext = null;
 
   isRecording.value = false;
-
-  try {
-    if (audioWorkletNode) { audioWorkletNode.disconnect(); audioWorkletNode = null; }
-    if (mediaStream) { mediaStream.getTracks().forEach(track => track.stop()); mediaStream = null; }
-    if (audioContext && audioContext.state !== 'closed') { audioContext.close(); audioContext = null; }
-
-    console.log('录音资源已清理');
-
-
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      setTimeout(() => {
-        if(socket) socket.close(1000, '录音结束');
-      }, 100);
-    }
-  } catch (error) {
-    console.error('停止录音时出错:', error);
-  }
+  connectionStatus.value = 'disconnected';
 };
 
+const getCharacterName = (char: string | null) => characters.value.find(c => c.id === char)?.name || '未知角色';
 
+// 动画函数
 const beforeTitleEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(-30px)'; };
 const enterTitle = (el: Element, done: () => void) => { gsap.to(el, { opacity: 1, y: 0, duration: 0.8, ease: 'power3.out', onComplete: done }); };
 const beforeCharEnter = (el: Element) => { (el as HTMLElement).style.opacity = '0'; (el as HTMLElement).style.transform = 'translateY(30px) scale(0.9)'; };
@@ -247,28 +203,13 @@ const enterChar = (el: Element, done: () => void) => {
   gsap.to(el, { opacity: 1, y: 0, scale: 1, duration: 0.6, delay: index * 0.15 + 0.5, ease: 'power2.out', onComplete: done });
 };
 
-// 计算属性和辅助函数
-const getCharacterName = (char: string | null) => {
-  return characters.value.find(c => c.id === char)?.name || '未知角色';
-};
-
-const getRecordButtonText = () => {
-  if (connectionStatus.value === 'connecting') return '正在连接...';
-  if (connectionStatus.value === 'error') return '连接失败, 点击重试';
-  if (isRecording.value) return '正在录音... (松开停止)';
-  return '按住说话';
-};
-
-// 生命周期管理
 onUnmounted(() => {
-  stopRecording();
-  if (socket) {
-    socket.close(1000, '用户离开页面');
-  }
+  disconnectWebSocket();
 });
 </script>
 
 <style>
+
 .main-container {
   display: flex;
   align-items: center;
@@ -276,6 +217,14 @@ onUnmounted(() => {
   height: 100vh;
   color: var(--text-light);
 }
+
+.chat-screen {
+  width: 100%;
+  max-width: 750px;
+  height: 80vh;
+  max-height: 700px;
+}
+
 
 .selection-screen {
   text-align: center;
@@ -322,12 +271,6 @@ onUnmounted(() => {
   text-shadow: 0 0 10px rgba(0,0,0,0.5);
 }
 
-.chat-screen {
-  width: 100%;
-  max-width: 600px;
-  height: 80vh;
-  max-height: 700px;
-}
 
 .chat-wrapper {
   width: 100%;
@@ -371,39 +314,56 @@ onUnmounted(() => {
   opacity: 0.7;
   transition: opacity 0.2s ease;
 }
-.back-button:hover {
-  opacity: 1;
-}
 
 .status-light {
   width: 12px;
   height: 12px;
   border-radius: 50%;
   background: #6c757d;
-  transition: background 0.3s;
 }
-.status-light.connecting { background: #ffc107; }
-.status-light.connected { background: #28a745; }
-.status-light.error { background: #dc3545; }
+
+.status-light.connected {
+  background: #28a745;
+}
+
 
 .chat-window {
+  display: flex;
+  flex-direction: column;
   flex-grow: 1;
   overflow-y: auto;
   padding: 15px 5px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
+
+.voice-avatar-container {
+  flex-grow: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.voice-avatar {
+  width: 180px;
+  height: 180px;
+  border-radius: 50%;
+  border: 4px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  animation: subtle-float 4s ease-in-out infinite;
+}
+
+@keyframes subtle-float {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-15px);
+  }
+}
+
 
 .chat-window::-webkit-scrollbar { width: 6px; }
 .chat-window::-webkit-scrollbar-track { background: transparent; }
 .chat-window::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 3px;}
-
-.chat-window .empty-chat {
-  text-align: center;
-  color: rgba(255,255,255,0.6);
-  margin: auto;
-}
 
 .chat-window .user, .chat-window .ai {
   padding: 10px 15px;
@@ -415,15 +375,50 @@ onUnmounted(() => {
 .chat-window .user {
   background: #007bff;
   align-self: flex-end;
-  border-bottom-right-radius: 3px;
-  margin-left: auto;
 }
 
 .chat-window .ai {
   background: rgba(255, 255, 255, 0.1);
   align-self: flex-start;
-  border-bottom-left-radius: 3px;
-  margin-right: auto;
+}
+
+.empty-chat {
+  text-align: center;
+  color: rgba(255,255,255,0.6);
+  margin: auto;
+}
+
+.play-audio-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  margin-left: 8px;
+  font-size: 14px;
+}
+
+
+.mode-switcher {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 15px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  padding: 5px;
+  flex-shrink: 0;
+}
+.mode-switcher button {
+  flex: 1;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+.mode-switcher button.active {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
 }
 
 .controls {
@@ -432,40 +427,44 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-.record-btn {
+.voice-controls .record-btn.end-call {
+  background: #dc3545;
+  color: white;
   padding: 15px 30px;
   font-size: 18px;
   border: none;
   border-radius: 50px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  min-width: 200px;
 }
 
-.record-btn:not(:disabled) {
+.voice-controls .record-btn.end-call:hover {
+  background: #c82333;
+}
+
+.text-controls {
+  display: flex;
+  gap: 10px;
+}
+.text-controls input {
+  flex-grow: 1;
+  padding: 10px 15px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(0, 0, 0, 0.2);
+  color: white;
+}
+.send-btn, .voice-to-text-btn {
+  padding: 10px 15px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+}
+.send-btn {
   background: #007bff;
   color: white;
 }
-
-.record-btn:not(:disabled):hover {
-  background: #0056b3;
-  transform: translateY(-2px);
-}
-
-.record-btn.recording {
-  background: #dc3545 !important;
-  animation: pulse 1.5s infinite;
-}
-
-.record-btn:disabled {
-  background: #6c757d;
-  color: #fff;
-  cursor: not-allowed;
-}
-
-@keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.7); }
-  70% { box-shadow: 0 0 0 10px rgba(220, 53, 69, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0); }
+.voice-to-text-btn.recording {
+  background: #dc3545;
+  color: white;
 }
 </style>

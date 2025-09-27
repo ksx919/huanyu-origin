@@ -41,10 +41,12 @@ const logout = () => {
   --bg-dark-glass: rgba(0, 0, 0, 0.3);
 }
 
+
 body {
   margin: 0;
   font-family: 'Helvetica Neue', 'Hiragino Sans GB', 'WenQuanYi Micro Hei', 'Microsoft YaHei', sans-serif;
   overflow: hidden;
+  background-color: transparent;
 }
 
 .background-container {
