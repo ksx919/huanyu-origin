@@ -35,7 +35,7 @@ const logout = () => {
 </script>
 
 <style>
-/* 4. 将你原来的全局和背景样式放在这里，注意不要加 scoped */
+
 :root {
   --text-light: #f4f4f4;
   --bg-dark-glass: rgba(0, 0, 0, 0.3);
@@ -86,7 +86,6 @@ body {
   100% { transform: translateY(-10vh) scale(1); opacity: 0; }
 }
 
-/* 随机粒子效果 */
 .particle:nth-child(1) { top: 20%; left: 10%; width: 5px; height: 5px; animation-delay: 0s; animation-duration: 15s; }
 .particle:nth-child(2) { top: 80%; left: 30%; width: 8px; height: 8px; animation-delay: 2s; animation-duration: 20s; }
 .particle:nth-child(30) { top: 50%; left: 90%; width: 6px; height: 6px; animation-delay: 24s; animation-duration: 28s; }
@@ -100,7 +99,6 @@ body {
   color: var(--text-light);
 }
 
-/* 页头样式 */
 .app-header {
   position: fixed;
   top: 0;
