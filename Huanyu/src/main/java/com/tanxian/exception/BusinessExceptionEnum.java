@@ -24,7 +24,17 @@ public enum BusinessExceptionEnum {
     
     // JWT Token相关异常
     TOKEN_REQUIRED("请求缺少JWT Token"),
-    TOKEN_INVALID("JWT Token无效或已过期");
+    TOKEN_INVALID("JWT Token无效或已过期"),
+    
+    // 文件上传相关异常
+    FILE_UPLOAD_EMPTY("上传文件不能为空"),
+    FILE_SIZE_EXCEEDED("文件大小超出限制"),
+    FILE_FORMAT_NOT_SUPPORTED("不支持的文件格式"),
+    FILE_NAME_INVALID("文件名无效"),
+    QINIU_UPLOAD_FAILED("七牛云上传失败"),
+    QINIU_DELETE_FAILED("七牛云删除文件失败"),
+    QINIU_CONFIG_ERROR("七牛云配置错误"),
+    FILE_READ_ERROR("文件读取失败");
 
     BusinessExceptionEnum(String desc) {
         this.desc = desc;

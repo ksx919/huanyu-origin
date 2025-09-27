@@ -11,7 +11,7 @@ spring:
       initial-size: 5
       min-idle: 5
       max-active: 20
-      max-wait: 3000
+      max-wait: 30000
       async-init: true
   data:
     redis:
@@ -101,3 +101,20 @@ mybatis-plus:
   mapper-locations: classpath*:mapper/**/*.xml
   # 实体类别名包路径
   type-aliases-package: com.tanxian.entity
+
+# 七牛云存储配置
+qiniu:
+  # 七牛云Access Key（请替换为实际的密钥）
+  access-key: ${QINIU_ACCESS_KEY}
+  # 七牛云Secret Key（请替换为实际的密钥）
+  secret-key: ${QINIU_SECRET_KEY}
+  # 存储空间名称
+  bucket-name: ${QINIU_BUCKET_NAME:huanyu-origin}
+  # 存储区域（已使用自动区域识别，无需手动配置）
+  region: auto
+  # 访问域名（请替换为实际的CDN域名）
+  domain: ${QINIU_DOMAIN}
+  # 文件上传路径前缀
+  path-prefix: huanyu/avatar/
+  # 文件大小限制（字节），默认10MB
+  max-file-size: 10485760

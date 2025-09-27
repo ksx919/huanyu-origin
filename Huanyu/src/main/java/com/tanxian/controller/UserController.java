@@ -38,7 +38,7 @@ public class UserController {
     @Operation(summary = "获取图形验证码", description = "生成包含随机字符的图形验证码")
     public CommonResp<CaptchaResp> getCaptcha() {
         CaptchaResp captchaResp = captchaService.generateCaptcha();
-        return new CommonResp<>(captchaResp);
+        return CommonResp.success(captchaResp);
     }
 
     /**
@@ -53,7 +53,7 @@ public class UserController {
             request.getCaptchaCode()
         );
         
-        return new CommonResp<>(true, "邮箱验证码发送成功，请查收邮件", "发送成功");
+        return CommonResp.success("邮箱验证码发送成功，请查收邮件");
     }
 
     /**
@@ -64,7 +64,7 @@ public class UserController {
     public CommonResp<RegisterResp> register(@Valid @RequestBody RegisterReq request) {
         log.info("用户注册请求: email={}", request.getEmail());
         RegisterResp registerResp = userService.register(request);
-        return new CommonResp<>(registerResp);
+        return CommonResp.success(registerResp);
     }
 
     /**
@@ -75,6 +75,6 @@ public class UserController {
     public CommonResp<LoginResp> login(@Valid @RequestBody LoginReq request) {
         log.info("用户登录请求: email={}, loginType={}", request.getEmail(), request.getLoginType());
         LoginResp loginResp = userService.login(request);
-        return new CommonResp<>(loginResp);
+        return CommonResp.success(loginResp);
     }
 }
