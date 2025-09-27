@@ -76,6 +76,8 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
         // 为每个新连接创建一个新的SpeechTranscriberTool实例
         SpeechTranscriberTool speechTranscriberTool = applicationContext.getBean(SpeechTranscriberTool.class);
         sessionTools.put(session.getId(), speechTranscriberTool);
+        // 绑定当前会话，用于将AI文本与TTS音频回传到前端
+        speechTranscriberTool.bindSession(session);
         Object uidObj = session.getAttributes().get("userId");
         String nickname = String.valueOf(session.getAttributes().get("nickname"));
         LOG.info("WebSocket 已连接，Session={}, 用户Id={}, 昵称={}", session.getId(), uidObj, nickname);

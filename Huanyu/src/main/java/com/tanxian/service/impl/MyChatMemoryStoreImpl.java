@@ -1,14 +1,12 @@
 package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.tanxian.common.LoginUserContext;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.entity.ChatSession;
 import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.ChatMessageMapper;
 import com.tanxian.mapper.ChatSessionMapper;
-import com.tanxian.resp.LoginResp;
 import com.tanxian.service.MessageTurnToAiVoiceTool;
 import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
@@ -172,17 +170,15 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
         }
 
-        switch (characterType) {
-            case 0:
-                return "yoimiya";
-            case 1:
-                return "venti";
-            case 2:
-                return "hutao";
-            default:
+        return switch (characterType) {
+            case 0 -> "yoimiya";
+            case 1 -> "venti";
+            case 2 -> "hutao";
+            default -> {
                 log.error("不支持的角色类型: {}", characterType);
                 throw new BusinessException(BusinessExceptionEnum.UNSUPPORTED_CHARACTER_TYPE);
-        }
+            }
+        };
     }
 
     /**
@@ -327,19 +323,14 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         for (ChatMessage dbMessage : dbMessages) {
             try {
                 if (!"SYSTEM".equals(dbMessage.getMessageType())) {
-                    dev.langchain4j.data.message.ChatMessage message;
-                    switch (dbMessage.getMessageType()) {
-                        case "ASSISTANT":
-                            message = new AiMessage(dbMessage.getContent());
-                            break;
-                        case "USER":
-                            message = new UserMessage(dbMessage.getContent());
-                            break;
-                        default:
+                    dev.langchain4j.data.message.ChatMessage message = switch (dbMessage.getMessageType()) {
+                        case "ASSISTANT" -> new AiMessage(dbMessage.getContent());
+                        case "USER" -> new UserMessage(dbMessage.getContent());
+                        default -> {
                             log.warn("未知消息类型: {}, 当作USER消息处理", dbMessage.getMessageType());
-                            message = new UserMessage(dbMessage.getContent());
-                            break;
-                    }
+                            yield new UserMessage(dbMessage.getContent());
+                        }
+                    };
                     result.add(message);
                 }
             } catch (Exception e) {
@@ -398,12 +389,12 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             
             // 检查是否有新消息需要存储
             // 由于LangChain4j的内存窗口限制，我们需要检测新增的消息
-            if (currentWindowMessages.size() > 0) {
+            if (!currentWindowMessages.isEmpty()) {
                 // 获取当前窗口中的最后一条消息
                 dev.langchain4j.data.message.ChatMessage lastMessage = currentWindowMessages.get(currentWindowMessages.size() - 1);
                 
                 // 检查这条消息是否已经存在于数据库中
-                if (!isMessageExistsInDatabase(sessionId, lastMessage, existingCount)) {
+                if (!isMessageExistsInDatabase(sessionId, lastMessage)) {
                     // 如果最后一条消息不存在，说明有新消息需要存储
                     ChatMessage dbMessage = convertSingleMessageToDb(sessionId, lastMessage);
                     if (dbMessage != null) {
@@ -412,9 +403,9 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                                 dbMessage.getContent().length() > 50 ? 
                                 dbMessage.getContent().substring(0, 50) + "..." : 
                                 dbMessage.getContent());
-                        if(dbMessage.getMessageType().equals("ASSISTANT")) {
-                            messageTurnToAiVoiceTool.turnToAiVoice(dbMessage.getContent(),dbMessage.getSessionId());
-                        }
+                        // if(dbMessage.getMessageType().equals("ASSISTANT")) {
+                        //     messageTurnToAiVoiceTool.turnToAiVoice(dbMessage.getContent(),dbMessage.getSessionId());
+                        // }
                     }
                 } else {
                     log.debug("消息已存在于数据库中，无需重复存储");
@@ -429,7 +420,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     /**
      * 检查消息是否已存在于数据库中
      */
-    private boolean isMessageExistsInDatabase(String sessionId, dev.langchain4j.data.message.ChatMessage message, Long existingCount) {
+    private boolean isMessageExistsInDatabase(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
         try {
             // 获取数据库中最后几条消息进行比较
             LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
@@ -511,76 +502,76 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             return "USER";
         }
     }
-    private void insertNewMessagesOnly(String sessionId, List<dev.langchain4j.data.message.ChatMessage> newMessages) {
-        try {
-            // 获取数据库中已存在的消息数量
-            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
-            countWrapper.eq(ChatMessage::getSessionId, sessionId)
-                    .ne(ChatMessage::getMessageType, "SYSTEM");
-            Long existingCount = chatMessageMapper.selectCount(countWrapper);
-            
-            log.info("会话 {} 数据库中已有 {} 条消息，新消息列表有 {} 条", sessionId, existingCount, newMessages.size());
-            
-            // 如果新消息数量大于已存在的消息数量，则插入差异部分
-            if (newMessages.size() > existingCount) {
-                List<dev.langchain4j.data.message.ChatMessage> messagesToInsert = 
-                    newMessages.subList(existingCount.intValue(), newMessages.size());
-                
-                List<ChatMessage> dbMessages = convertToDbMessages(sessionId, messagesToInsert);
-                
-                if (!dbMessages.isEmpty()) {
-                    // 逐条插入新消息（MyBatis-Plus BaseMapper没有批量插入方法）
-                    for (ChatMessage dbMessage : dbMessages) {
-                        chatMessageMapper.insert(dbMessage);
-                    }
-                    log.info("成功插入 {} 条新消息到数据库", dbMessages.size());
-                } else {
-                    log.info("没有新消息需要插入");
-                }
-            } else {
-                log.info("消息数量未增加，无需插入新消息");
-            }
-            
-        } catch (Exception e) {
-            log.error("增量插入消息失败，sessionId: {}", sessionId, e);
-        }
-    }
+//    private void insertNewMessagesOnly(String sessionId, List<dev.langchain4j.data.message.ChatMessage> newMessages) {
+//        try {
+//            // 获取数据库中已存在的消息数量
+//            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+//            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+//                    .ne(ChatMessage::getMessageType, "SYSTEM");
+//            Long existingCount = chatMessageMapper.selectCount(countWrapper);
+//
+//            log.info("会话 {} 数据库中已有 {} 条消息，新消息列表有 {} 条", sessionId, existingCount, newMessages.size());
+//
+//            // 如果新消息数量大于已存在的消息数量，则插入差异部分
+//            if (newMessages.size() > existingCount) {
+//                List<dev.langchain4j.data.message.ChatMessage> messagesToInsert =
+//                    newMessages.subList(existingCount.intValue(), newMessages.size());
+//
+//                List<ChatMessage> dbMessages = convertToDbMessages(sessionId, messagesToInsert);
+//
+//                if (!dbMessages.isEmpty()) {
+//                    // 逐条插入新消息（MyBatis-Plus BaseMapper没有批量插入方法）
+//                    for (ChatMessage dbMessage : dbMessages) {
+//                        chatMessageMapper.insert(dbMessage);
+//                    }
+//                    log.info("成功插入 {} 条新消息到数据库", dbMessages.size());
+//                } else {
+//                    log.info("没有新消息需要插入");
+//                }
+//            } else {
+//                log.info("消息数量未增加，无需插入新消息");
+//            }
+//
+//        } catch (Exception e) {
+//            log.error("增量插入消息失败，sessionId: {}", sessionId, e);
+//        }
+//    }
 
-    /**
-     * 将langchain4j消息转换为数据库消息格式
-     */
-    private List<ChatMessage> convertToDbMessages(String sessionId, List<dev.langchain4j.data.message.ChatMessage> messages) {
-        return messages.stream()
-                .filter(message -> !(message instanceof SystemMessage))
-                .map(message -> {
-                    try {
-                        ChatMessage dbMessage = new ChatMessage();
-                        dbMessage.setSessionId(sessionId);
-
-                        if (message instanceof UserMessage) {
-                            String content = ((UserMessage) message).singleText();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
-                            dbMessage.setMessageType("USER");
-                        } else if (message instanceof AiMessage) {
-                            String content = ((AiMessage) message).text();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
-                            dbMessage.setMessageType("ASSISTANT");
-                        } else {
-                            String content = message.toString();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
-                            dbMessage.setMessageType("USER");
-                        }
-
-                        dbMessage.setCreatedAt(LocalDateTime.now());
-                        return dbMessage;
-                    } catch (Exception e) {
-                        log.error("转换数据库消息失败: {}", message, e);
-                        return null;
-                    }
-                })
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
-    }
+//    /**
+//     * 将langchain4j消息转换为数据库消息格式
+//     */
+//    private List<ChatMessage> convertToDbMessages(String sessionId, List<dev.langchain4j.data.message.ChatMessage> messages) {
+//        return messages.stream()
+//                .filter(message -> !(message instanceof SystemMessage))
+//                .map(message -> {
+//                    try {
+//                        ChatMessage dbMessage = new ChatMessage();
+//                        dbMessage.setSessionId(sessionId);
+//
+//                        if (message instanceof UserMessage) {
+//                            String content = ((UserMessage) message).singleText();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
+//                            dbMessage.setMessageType("USER");
+//                        } else if (message instanceof AiMessage) {
+//                            String content = ((AiMessage) message).text();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
+//                            dbMessage.setMessageType("ASSISTANT");
+//                        } else {
+//                            String content = message.toString();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
+//                            dbMessage.setMessageType("USER");
+//                        }
+//
+//                        dbMessage.setCreatedAt(LocalDateTime.now());
+//                        return dbMessage;
+//                    } catch (Exception e) {
+//                        log.error("转换数据库消息失败: {}", message, e);
+//                        return null;
+//                    }
+//                })
+//                .filter(Objects::nonNull)
+//                .collect(Collectors.toList());
+//    }
 
     /**
      * 记录会话信息
@@ -627,17 +618,15 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
      * 根据角色类型获取角色名称
      */
     private String getCharacterNameByType(Short characterType) {
-        switch (characterType) {
-            case 0:
-                return "宵宫";
-            case 1:
-                return "温迪";
-            case 2:
-                return "胡桃";
-            default:
+        return switch (characterType) {
+            case 0 -> "宵宫";
+            case 1 -> "温迪";
+            case 2 -> "胡桃";
+            default -> {
                 log.warn("不支持的角色类型: {}, 使用默认名称", characterType);
-                return "默认角色";
-        }
+                yield "默认角色";
+            }
+        };
     }
 
     /**

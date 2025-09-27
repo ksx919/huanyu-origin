@@ -13,11 +13,24 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.SendToAiTool;
+import com.tanxian.service.MessageTurnToAiVoiceTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
+import org.springframework.web.socket.BinaryMessage;
+import org.springframework.web.socket.TextMessage;
+import org.springframework.web.socket.WebSocketSession;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import java.io.InputStream;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 此示例演示了：
@@ -33,6 +46,8 @@ public class SpeechTranscriberTool {
     AiChatService aiChatService;
     @Autowired
     SendToAiTool sendToAiTool;
+    @Autowired
+    MessageTurnToAiVoiceTool messageTurnToAiVoiceTool;
 
     private String appKey,id,secret,url,sessionId;
     private NlsClient client;
@@ -40,6 +55,11 @@ public class SpeechTranscriberTool {
     public boolean isRecording;
     public SpeechTranscriber transcriber;
     public int cnt;
+
+    private volatile WebSocketSession boundSession;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+    // Ensure websocket writes are serialized per session
+    private final ExecutorService sendExecutor = Executors.newSingleThreadExecutor();
 
     public SpeechTranscriberTool() {
         cnt=0;
@@ -119,6 +139,40 @@ public class SpeechTranscriberTool {
                 System.out.println("lwj会话id是:"+sessionId);
                 sendToAiTool.sendToAi(sessionId,response.getTransSentenceText(),characterId);
 
+                // Stream AI text to frontend via WebSocket and then TTS audio
+                try {
+                    final WebSocketSession session = boundSession;
+                    if (session != null && session.isOpen()) {
+                        String userText = response.getTransSentenceText();
+                        final StringBuilder aiTextBuilder = new StringBuilder();
+
+                        aiChatService.chat(sessionId, userText, characterId)
+                                .subscribe(
+                                        chunk -> {
+                                            aiTextBuilder.append(chunk);
+                                            // send ai text chunk
+                                            Map<String, Object> msg = new HashMap<>();
+                                            msg.put("type", "ai_text");
+                                            msg.put("chunk", chunk);
+                                            safeSendText(session, msg);
+                                        },
+                                        error -> {
+                                            Map<String, Object> msg = new HashMap<>();
+                                            msg.put("type", "ai_error");
+                                            msg.put("message", String.valueOf(error.getMessage()));
+                                            safeSendText(session, msg);
+                                        },
+                                        () -> {
+                                            // After AI text completes, start TTS audio streaming
+                                            String aiText = aiTextBuilder.toString();
+                                            streamTtsAndSend(aiText, sessionId);
+                                        }
+                                );
+                    }
+                } catch (Exception e) {
+                    logger.error("Error streaming AI/TTS via WebSocket", e);
+                }
+
             }
 
             //识别完毕
@@ -135,6 +189,68 @@ public class SpeechTranscriberTool {
         };
 
         return listener;
+    }
+
+    public void bindSession(WebSocketSession session) {
+        this.boundSession = session;
+    }
+
+    private boolean isSessionOpen(WebSocketSession session) {
+        return session != null && session.isOpen();
+    }
+
+    private void safeSendText(WebSocketSession session, Map<String, Object> payload) {
+        if (!isSessionOpen(session)) return;
+        try {
+            String json = objectMapper.writeValueAsString(payload);
+            // serialize writes via executor
+            sendExecutor.execute(() -> {
+                try {
+                    if (isSessionOpen(session)) session.sendMessage(new TextMessage(json));
+                } catch (Exception ex) {
+                    logger.warn("WebSocket text send failed: {}", ex.toString());
+                }
+            });
+        } catch (Exception e) {
+            logger.warn("Serialize text message failed: {}", e.toString());
+        }
+    }
+
+    private void streamTtsAndSend(String text, String sessionId) {
+        final WebSocketSession session = boundSession;
+        if (!isSessionOpen(session)) return;
+        try (InputStream is = messageTurnToAiVoiceTool.streamToAiVoice(text, sessionId)) {
+            // Notify audio start
+            Map<String, Object> start = new HashMap<>();
+            start.put("type", "audio_start");
+            safeSendText(session, start);
+
+            byte[] buf = new byte[4096];
+            int read;
+            while ((read = is.read(buf)) != -1) {
+                byte[] chunk = new byte[read];
+                System.arraycopy(buf, 0, chunk, 0, read);
+                // serialize binary writes via executor
+                sendExecutor.execute(() -> {
+                    try {
+                        if (isSessionOpen(session)) session.sendMessage(new BinaryMessage(chunk));
+                    } catch (Exception ex) {
+                        logger.warn("WebSocket binary send failed: {}", ex.toString());
+                    }
+                });
+            }
+
+            // Notify audio end
+            Map<String, Object> end = new HashMap<>();
+            end.put("type", "audio_end");
+            safeSendText(session, end);
+        } catch (Exception e) {
+            logger.error("TTS streaming failed", e);
+            Map<String, Object> err = new HashMap<>();
+            err.put("type", "audio_error");
+            err.put("message", String.valueOf(e.getMessage()));
+            safeSendText(session, err);
+        }
     }
 
     //根据二进制数据大小计算对应的同等语音长度。
@@ -267,8 +383,12 @@ public class SpeechTranscriberTool {
         }
     }
 
-    public void shutdown() throws Exception {
+    public void shutdown() {
         client.shutdown();
+        try {
+            sendExecutor.shutdownNow();
+            sendExecutor.awaitTermination(500, TimeUnit.MILLISECONDS);
+        } catch (Exception ignored) {}
     }
 
 }

@@ -46,16 +46,17 @@ public class FileUploadController {
 
         try {
             // 调用七牛云上传工具类
-            String fileUrl = qiniuUploadUtil.uploadAvatar(file);
+            String filePath = qiniuUploadUtil.uploadAvatar(file);
             
             // 构建响应对象
             FileUploadResp resp = new FileUploadResp(
-                    fileUrl, 
+                    filePath,
                     file.getOriginalFilename(),
                     file.getSize()
             );
             
-            LOG.info("用户头像上传成功，访问URL: {}", fileUrl);
+            LOG.info("用户头像上传成功，头像上传位置{}", filePath);
+
             return CommonResp.success(resp);
             
         } catch (Exception e) {
@@ -68,7 +69,7 @@ public class FileUploadController {
     @Operation(summary = "获取私有空间文件访问链接")
     public CommonResp<String> getPrivateUrl(
             @RequestParam(value = "expires", required = false) Long expires) {
-        String fileName = "huanyu/avatar/"+LoginUserContext.getUser().getAvatarUrl();
+        String fileName = LoginUserContext.getUser().getAvatarUrl();
         long exp = (expires == null || expires <= 0) ? 600L : expires; // 默认10分钟
         String url = qiniuUploadUtil.buildPrivateFileUrl(fileName, exp);
         return CommonResp.success(url);

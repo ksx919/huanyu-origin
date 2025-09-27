@@ -8,7 +8,7 @@ public class FileUploadResp {
     /**
      * 文件访问URL
      */
-    private String fileUrl;
+    private String filePath;
 
     /**
      * 文件名
@@ -29,18 +29,18 @@ public class FileUploadResp {
     }
 
     public FileUploadResp(String fileUrl, String fileName, Long fileSize) {
-        this.fileUrl = fileUrl;
+        this.filePath = fileUrl;
         this.fileName = fileName;
         this.fileSize = fileSize;
         this.uploadTime = System.currentTimeMillis();
     }
 
-    public String getFileUrl() {
-        return fileUrl;
+    public String getFilePath() {
+        return filePath;
     }
 
-    public void setFileUrl(String fileUrl) {
-        this.fileUrl = fileUrl;
+    public void setFilePath(String filePath) {
+        this.filePath = filePath;
     }
 
     public String getFileName() {
@@ -70,7 +70,7 @@ public class FileUploadResp {
     @Override
     public String toString() {
         return "FileUploadResp{" +
-                "fileUrl='" + fileUrl + '\'' +
+                "fileUrl='" + filePath + '\'' +
                 ", fileName='" + fileName + '\'' +
                 ", fileSize=" + fileSize +
                 ", uploadTime=" + uploadTime +

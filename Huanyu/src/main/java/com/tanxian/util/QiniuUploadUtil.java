@@ -170,17 +170,7 @@ public class QiniuUploadUtil {
             throw new BusinessException(BusinessExceptionEnum.QINIU_CONFIG_ERROR);
         }
         
-        // 确保域名以http://或https://开头
-        if (!domain.startsWith("http://") && !domain.startsWith("https://")) {
-            domain = "https://" + domain;
-        }
-        
-        // 确保域名以/结尾
-        if (!domain.endsWith("/")) {
-            domain += "/";
-        }
-        
-        return domain + fileName;
+        return fileName;
     }
 
     /**
