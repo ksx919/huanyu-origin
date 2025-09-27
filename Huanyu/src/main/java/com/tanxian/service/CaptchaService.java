@@ -32,4 +32,12 @@ public interface CaptchaService {
      * @return 是否发送成功
      */
     boolean sendEmailCode(String email, String captchaId, String captchaCode);
+
+    /**
+     * 删除图形验证码
+     *
+     * @param captchaId 验证码ID
+     * @return 是否删除成功
+     */
+    boolean deleteCaptcha(String captchaId);
 }

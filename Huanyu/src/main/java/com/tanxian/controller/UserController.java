@@ -56,6 +56,16 @@ public class UserController {
     }
 
     /**
+     * 删除图形验证码
+     */
+    @PostMapping("/captcha/delete")
+    @Operation(summary = "删除图形验证码", description = "根据图形验证码ID删除缓存中的验证码")
+    public CommonResp<String> deleteCaptcha(@Valid @RequestBody com.tanxian.req.DeleteCaptchaReq request) {
+        captchaService.deleteCaptcha(request.getCaptchaId());
+        return CommonResp.success("图形验证码已删除");
+    }
+
+    /**
      * 用户注册
      */
     @PostMapping("/register")

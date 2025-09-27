@@ -133,6 +133,23 @@ public class CaptchaServiceImpl implements CaptchaService {
         }
     }
 
+    @Override
+    public boolean deleteCaptcha(String captchaId) {
+        if (!StringUtils.hasText(captchaId)) {
+            throw new BusinessException(BusinessExceptionEnum.CAPTCHA_NOT_FOUND);
+        }
+
+        try {
+            String redisKey = CaptchaUtil.getCaptchaRedisKey(captchaId);
+            redisTemplate.delete(redisKey);
+            log.info("删除图形验证码成功，ID: {}", captchaId);
+            return true;
+        } catch (Exception e) {
+            log.error("删除图形验证码失败，ID: {}", captchaId, e);
+            throw new BusinessException(BusinessExceptionEnum.CAPTCHA_VERIFY_FAILED);
+        }
+    }
+
     /**
      * 将图片转换为Base64编码
      */

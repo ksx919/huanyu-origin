@@ -18,6 +18,7 @@ public class WebConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         // 用户认证相关接口
                         "/user/captcha",
+                        "/user/captcha/delete",
                         "/user/email-code", 
                         "/user/register",
                         "/user/login",

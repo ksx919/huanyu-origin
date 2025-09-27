@@ -5,50 +5,45 @@
       <button :class="{ active: mode === 'register' }" @click="setMode('register')">注册</button>
     </div>
 
-    <div v-if="mode === 'login'">
-      <h1 class="form-title">欢迎回来</h1>
+<div v-if="mode === 'login'">
+  <h1 class="form-title">欢迎回来</h1>
+  <div class="form-group">
+    <input type="email" v-model="form.email" placeholder="邮箱地址">
+  </div>
+  <div class="form-group">
+    <input type="password" v-model="form.password" placeholder="密码">
+  </div>
+  <button @click="handleLogin" class="submit-btn" :disabled="isLoggingIn">{{ isLoggingIn ? '登录中...' : '登 录' }}</button>
+</div>
+
+    <div v-if="mode === 'register'">
+      <h1 class="form-title">创建新账户</h1>
       <div class="form-group">
         <input type="email" v-model="form.email" placeholder="邮箱地址">
       </div>
       <div class="form-group">
-        <input type="password" v-model="form.password" placeholder="密码">
+        <input type="text" v-model="form.nickname" placeholder="昵称">
       </div>
-      <button @click="handleLogin" class="submit-btn">登 录</button>
-    </div>
-
-    <div v-if="mode === 'register'">
-      <div v-if="registrationStep === 1">
-        <h1 class="form-title">创建新账户</h1>
-        <div class="form-group">
-          <input type="email" v-model="form.email" placeholder="邮箱地址">
-        </div>
-        <div class="form-group">
-          <input type="password" v-model="form.password" placeholder="请输入密码">
-        </div>
-        <div class="form-group">
-          <input type="password" v-model="form.confirmPassword" placeholder="请确认密码">
-        </div>
-        <div class="form-group captcha-group">
-          <input type="text" v-model="form.graphicCaptchaCode" placeholder="图形验证码">
-          <div class="captcha-image" @click="getGraphicCaptcha">
-            <img v-if="graphicCaptchaImage" :src="graphicCaptchaImage" alt="图形验证码">
-            <span v-else>...</span>
-          </div>
-        </div>
-        <button @click="handleRegistrationStep1" class="submit-btn">获取邮箱验证码</button>
+      <div class="form-group">
+        <input type="password" v-model="form.password" placeholder="请输入密码">
       </div>
-
-      <div v-if="registrationStep === 2">
-        <h1 class="form-title">验证邮箱</h1>
-        <p class="email-notice">验证码已发送至 {{ form.email }}，请查收。</p>
-        <div class="form-group captcha-group">
-          <input type="text" v-model="form.emailCode" placeholder="请输入邮箱验证码">
-          <button @click="resendEmailCode" :disabled="cooldown > 0" class="email-code-btn">
-            {{ cooldown > 0 ? `${cooldown}s` : '重新发送' }}
-          </button>
-        </div>
-        <button @click="handleFinalRegistration" class="submit-btn">完 成 注 册</button>
+      <div class="form-group">
+        <input type="password" v-model="form.confirmPassword" placeholder="请确认密码">
       </div>
+      <div class="form-group captcha-group">
+        <input type="text" v-model="form.graphicCaptchaCode" placeholder="图形验证码">
+        <div class="captcha-image" @click="getGraphicCaptcha">
+          <img v-if="graphicCaptchaImage" :src="graphicCaptchaImage" alt="图形验证码">
+          <span v-else>...</span>
+        </div>
+      </div>
+      <div class="form-group captcha-group">
+        <input type="text" v-model="form.emailCode" placeholder="请输入邮箱验证码">
+        <button @click="handleRegistrationStep1" :disabled="cooldown > 0" class="email-code-btn">
+          {{ cooldown > 0 ? `${cooldown}s` : (emailCodeSent ? '重新发送' : '发送验证码') }}
+        </button>
+      </div>
+  <button @click="handleFinalRegistration" class="submit-btn" :disabled="isRegistering">{{ isRegistering ? '注册中...' : '注 册' }}</button>
     </div>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
@@ -57,9 +52,9 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue';
-import axios from 'axios';
 import { useRouter } from 'vue-router';
 import { authState } from '../store/auth';
+import http from '../utils/axios';
 
 // 'login' 或 'register'
 const mode = ref('login');
@@ -69,6 +64,7 @@ const registrationStep = ref(1);
 // 使用 reactive 来组织表单数据
 const form = reactive({
   email: '',
+  nickname: '',
   password: '',
   confirmPassword: '',
   graphicCaptchaCode: '',
@@ -80,13 +76,24 @@ const graphicCaptchaImage = ref('');
 const errorMessage = ref('');
 const cooldown = ref(0);
 let timer: number | null = null;
+const emailCodeSent = ref(false);
+const isLoggingIn = ref(false);
+const isRegistering = ref(false);
 
 const router = useRouter();
 
 //通用函数
 const getGraphicCaptcha = async () => {
   try {
-    const response = await axios.get('http://localhost:8080/api/captcha/image'); // TODO: 替换API地址
+    // 若已有旧验证码，先通知后端删除
+    if (graphicCaptchaId.value) {
+      try {
+        await http.post('/user/captcha/delete', { captchaId: graphicCaptchaId.value });
+      } catch (e) {
+        // 删除失败不影响重新获取，忽略错误
+      }
+    }
+    const response = await http.get('/user/captcha');
     if (response.data.success) {
       graphicCaptchaId.value = response.data.data.captchaId;
       graphicCaptchaImage.value = response.data.data.captchaImage;
@@ -106,10 +113,11 @@ const startCooldown = () => {
 }
 
 const resetForm = () => {
-  Object.assign(form, { email: '', password: '', confirmPassword: '', graphicCaptchaCode: '', emailCode: '' });
+  Object.assign(form, { email: '', nickname: '', password: '', confirmPassword: '', graphicCaptchaCode: '', emailCode: '' });
   errorMessage.value = '';
   registrationStep.value = 1;
   getGraphicCaptcha();
+  emailCodeSent.value = false;
 }
 
 const setMode = (newMode: 'login' | 'register') => {
@@ -119,27 +127,28 @@ const setMode = (newMode: 'login' | 'register') => {
 
 //注册流程
 const handleRegistrationStep1 = async () => {
-  if (form.password !== form.confirmPassword) {
-    errorMessage.value = '两次输入的密码不一致！';
-    return;
-  }
-  if (!form.email || !form.password || !form.graphicCaptchaCode) {
-    errorMessage.value = '请填写所有必填项！';
+  // 发送邮箱验证码，仅校验邮箱与图形验证码
+  if (!form.email || !form.graphicCaptchaCode || !graphicCaptchaId.value) {
+    errorMessage.value = '请先填写邮箱与图形验证码！';
     return;
   }
 
   try {
     //获取邮箱验证码
-    await axios.post('http://localhost:8080/api/captcha/email', { // TODO: 替换API地址
+    const response = await http.post('/user/email-code', {
       email: form.email,
       captchaId: graphicCaptchaId.value,
       captchaCode: form.graphicCaptchaCode,
     });
-
-    // 成功后，进入第二步并开始冷却
-    registrationStep.value = 2;
-    startCooldown();
-    errorMessage.value = '';
+    // 根据后端响应判断是否发送成功
+    if (response.data?.success) {
+      startCooldown();
+      emailCodeSent.value = true;
+      errorMessage.value = '';
+    } else {
+      errorMessage.value = response.data?.message || '发送验证码失败，请重试';
+      getGraphicCaptcha(); // 失败后刷新图形验证码
+    }
 
   } catch (error: any) {
     errorMessage.value = error.response?.data?.message || '请求失败，请重试';
@@ -148,30 +157,39 @@ const handleRegistrationStep1 = async () => {
 };
 
 const resendEmailCode = () => {
-  // 重新发送实际上就是再执行一遍第一步的逻辑
   handleRegistrationStep1();
 };
 
 const handleFinalRegistration = async () => {
-  if (!form.emailCode) {
-    errorMessage.value = '请输入邮箱验证码！';
+  // 注册时校验所有必填项非空与密码一致性
+  if (form.password !== form.confirmPassword) {
+    errorMessage.value = '两次输入的密码不一致！';
     return;
   }
-
+  if (!form.email || !form.nickname || !form.password || !form.confirmPassword || !form.emailCode) {
+    errorMessage.value = '请完整填写所有注册信息！';
+    return;
+  }
+  isRegistering.value = true;
   try {
     // 这个接口对应最终的注册请求
-    await axios.post('http://localhost:8080/api/user/register', { // TODO: 替换API地址
+    const response = await http.post('/user/register', {
       email: form.email,
       password: form.password,
-      captchaCode: form.emailCode,
-      loginType: 0, // 密码注册
+      emailCode: form.emailCode,
+      nickname: form.nickname,
     });
 
-    alert('注册成功！将自动跳转到登录页面。');
-    setMode('login'); // 注册成功后切换到登录模式
-
+    if (response.data?.success) {
+      alert('注册成功！将自动跳转到登录页面。');
+      setMode('login'); // 注册成功后切换到登录模式
+    } else {
+      errorMessage.value = response.data?.message || '注册失败，请检查验证码';
+    }
   } catch (error: any) {
     errorMessage.value = error.response?.data?.message || '注册失败，请检查验证码';
+  } finally {
+    isRegistering.value = false;
   }
 };
 
@@ -181,10 +199,10 @@ const handleLogin = async () => {
     errorMessage.value = '请输入邮箱和密码！';
     return;
   }
-
+  isLoggingIn.value = true;
   try {
     // 这个接口对应登录请求
-    const response = await axios.post('http://localhost:8080/api/user/login', { // TODO: 替换API地址
+    const response = await http.post('/user/login', {
       email: form.email,
       password: form.password,
       loginType: 0, // 密码登录
@@ -199,6 +217,8 @@ const handleLogin = async () => {
     }
   } catch (error: any) {
     errorMessage.value = error.response?.data?.message || '登录失败，请检查凭据';
+  } finally {
+    isLoggingIn.value = false;
   }
 };
 
@@ -261,19 +281,22 @@ onMounted(() => {
 
 input {
   width: 100%;
-  padding: 12px 15px;
+  height: 45px;
+  padding: 0 15px;
   border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   background-color: rgba(0, 0, 0, 0.2);
   color: var(--text-light);
   font-size: 16px;
+  box-sizing: border-box;
 }
 input::placeholder {
   color: rgba(255, 255, 255, 0.5);
 }
 
 .captcha-group {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr 120px;
   gap: 10px;
 }
 .captcha-group input {
@@ -298,13 +321,19 @@ input::placeholder {
 }
 
 .email-code-btn {
-  padding: 10px 15px;
+  width: 120px;
+  height: 45px;
+  padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.3);
   border-radius: 8px;
   background-color: rgba(0, 0, 0, 0.2);
   color: var(--text-light);
   cursor: pointer;
   white-space: nowrap;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  box-sizing: border-box;
 }
 .email-code-btn:disabled {
   cursor: not-allowed;
