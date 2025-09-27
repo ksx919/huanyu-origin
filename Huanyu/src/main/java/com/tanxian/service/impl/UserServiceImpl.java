@@ -188,9 +188,10 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(BusinessExceptionEnum.USER_NOT_FOUND);
         }
 
-        // 2. 校验旧密码密码是否正确
-        if(user.getPasswordHash()==PasswordUtil.encryptPassword(request.getOldPassword())){
+        // 2. 校验旧密码是否正确
+        if(PasswordUtil.verifyPassword(request.getOldPassword(), user.getPasswordHash())){
             user.setPasswordHash(PasswordUtil.encryptPassword(request.getNewPassword()));
+            userMapper.updateById(user);
         }
         else{
             return false;
@@ -201,17 +202,9 @@ public class UserServiceImpl implements UserService {
         userMapper.updateLastLoginTime(user.getId(), now);
         user.setLastLoginAt(now);
 
-        // 4. 生成JWT Token
-        String token = JwtUtil.generateToken(
-                user.getId(),
-                user.getEmail(),
-                user.getNickname(),
-                user.getAvatarUrl()
-        );
-
         log.info("用户更新密码成功: userId={}", user.getId());
 
-        // 5. 返回登录响应
+        // 4. 返回更新结果
         return true;
     }
 
@@ -230,6 +223,7 @@ public class UserServiceImpl implements UserService {
             return false;
         }
         user.setNickname(nickname);
+        userMapper.updateById(user);
         String token = JwtUtil.generateToken(
                 user.getId(),
                 user.getEmail(),
