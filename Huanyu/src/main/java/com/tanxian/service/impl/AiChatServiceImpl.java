@@ -2,6 +2,8 @@ package com.tanxian.service.impl;
 
 import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
+import com.tanxian.common.LoginUserContext;
+import com.tanxian.resp.LoginResp;
 import com.tanxian.service.AiChatService;
 import com.tanxian.service.MyChatMemoryStore;
 import com.tanxian.service.MessageTurnToAiVoiceTool;
@@ -63,14 +65,27 @@ public class AiChatServiceImpl implements AiChatService {
                             // 生成固定文件键：huanyu/audio/<type>-<sha1(text)>.wav
                             String sha1 = sha1Hex(aiText.trim());
                             String fileKey = "huanyu/audio/" + type + "-" + sha1 + ".wav";
-                            // 如果已存在则跳过上传
-                            if (!qiniuUploadUtil.exists(fileKey)) {
+                            boolean existsBefore = qiniuUploadUtil.exists(fileKey);
+                            System.out.println("[AiChatService] 准备上传音频 fileKey=" + fileKey + ", existsBefore=" + existsBefore);
+                            if (!existsBefore) {
                                 byte[] wav = messageTurnToAiVoiceTool.turnToAiVoice(aiText, sessionId);
+                                System.out.println("[AiChatService] TTS生成字节大小=" + (wav == null ? 0 : wav.length));
                                 if (wav != null && wav.length > 0) {
-                                    qiniuUploadUtil.uploadAudioBytesWithKey(wav, fileKey);
-                                    // 可选：设置几天后自动删除
-                                    qiniuUploadUtil.setDeleteAfterDays(fileKey, 2);
+                                    try {
+                                        qiniuUploadUtil.uploadAudioBytesWithKey(wav, fileKey);
+                                        boolean existsAfter = qiniuUploadUtil.exists(fileKey);
+                                        System.out.println("[AiChatService] 上传完成 existsAfter=" + existsAfter + ", fileKey=" + fileKey);
+                                        // 可选：设置几天后自动删除
+                                        qiniuUploadUtil.setDeleteAfterDays(fileKey, 1);
+                                    } catch (Exception ue) {
+                                        System.err.println("[AiChatService] 七牛上传失败: " + ue.getMessage());
+                                        ue.printStackTrace();
+                                    }
+                                } else {
+                                    System.err.println("[AiChatService] TTS生成音频为空，跳过上传 fileKey=" + fileKey);
                                 }
+                            } else {
+                                System.out.println("[AiChatService] 音频已存在，跳过上传 fileKey=" + fileKey);
                             }
                         } catch (Exception e) {
                             // 仅记录，不影响聊天流

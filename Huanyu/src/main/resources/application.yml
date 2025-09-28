@@ -62,12 +62,14 @@ langchain4j:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       api-key: ${OPENAI_API_KEY}
       model-name: qwen-plus
+      max-tokens: 64
       log-requests: true
       log-responses: true
     streaming-chat-model:
       base-url: https://dashscope.aliyuncs.com/compatible-mode/v1
       api-key: ${OPENAI_API_KEY}
       model-name: qwen-plus
+      max-tokens: 64
       log-requests: true
       log-responses: true
 

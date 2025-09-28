@@ -628,6 +628,41 @@ def pack_wav(audio_bytes, rate):
     return wav_bytes
 
 
+def wave_header_chunk(sample_rate: int, channels: int = 1, bits_per_sample: int = 16):
+    """生成用于流式传输的最小 WAV 头部（首包）。
+    data 长度未知时，使用占位大小，前端只需解析格式即可开始播放。
+    """
+    import struct
+
+    byte_rate = sample_rate * channels * bits_per_sample // 8
+    block_align = channels * bits_per_sample // 8
+
+    # 使用一个大的占位值，避免依赖总数据长度
+    data_size_placeholder = 0x7FFFFFFF
+    riff_chunk_size = 36 + data_size_placeholder
+
+    header = b""
+    header += b"RIFF"
+    header += struct.pack("<I", riff_chunk_size)
+    header += b"WAVE"
+
+    # fmt 子块
+    header += b"fmt "
+    header += struct.pack("<I", 16)  # PCM
+    header += struct.pack("<H", 1)  # AudioFormat = PCM
+    header += struct.pack("<H", channels)
+    header += struct.pack("<I", sample_rate)
+    header += struct.pack("<I", byte_rate)
+    header += struct.pack("<H", block_align)
+    header += struct.pack("<H", bits_per_sample)
+
+    # data 子块
+    header += b"data"
+    header += struct.pack("<I", data_size_placeholder)
+
+    return header
+
+
 def pack_aac(audio_bytes, data, rate):
     if is_int32:
         pcm = "s32le"
@@ -780,6 +815,7 @@ def get_tts_wav(
     phones1, bert1, norm_text1 = get_phones_and_bert(prompt_text, prompt_language, version)
     texts = text.split("\n")
     audio_bytes = BytesIO()
+    first_chunk = True
 
     for text in texts:
         # 简单防止纯符号引发参考音频泄露
@@ -895,6 +931,10 @@ def get_tts_wav(
             audio_bytes = pack_audio(audio_bytes, (audio_opt * 32768).astype(np.int16), sr)
         # logger.info("%.3f\t%.3f\t%.3f\t%.3f" % (t1 - t0, t2 - t1, t3 - t2, t4 - t3))
         if stream_mode == "normal":
+            # 在流式模式且请求媒体类型为 wav 时，首包先发送 WAV 头部
+            if media_type == "wav" and first_chunk:
+                yield wave_header_chunk(sample_rate=sr, channels=1, bits_per_sample=16)
+                first_chunk = False
             audio_bytes, audio_chunk = read_clean_buffer(audio_bytes)
             yield audio_chunk
 

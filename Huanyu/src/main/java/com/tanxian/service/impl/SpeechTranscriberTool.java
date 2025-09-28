@@ -12,7 +12,6 @@ import com.alibaba.nls.client.protocol.asr.SpeechTranscriber;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberListener;
 import com.alibaba.nls.client.protocol.asr.SpeechTranscriberResponse;
 import com.tanxian.service.AiChatService;
-import com.tanxian.service.SendToAiTool;
 import com.tanxian.service.MessageTurnToAiVoiceTool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,11 +44,12 @@ public class SpeechTranscriberTool {
     @Autowired
     AiChatService aiChatService;
     @Autowired
-    SendToAiTool sendToAiTool;
-    @Autowired
     MessageTurnToAiVoiceTool messageTurnToAiVoiceTool;
 
     private String appKey,id,secret,url,sessionId;
+    // 可选：阿里云定制模型与热词词表ID（通过环境变量注入）
+    private String customizationId;
+    private String vocabularyId;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
     public boolean isRecording;
@@ -62,6 +62,12 @@ public class SpeechTranscriberTool {
     private final ExecutorService sendExecutor = Executors.newSingleThreadExecutor();
     // Interrupt flag for stopping current TTS audio streaming
     private volatile boolean stopAudioStreaming = false;
+    // 串行处理音频播放，避免并发交错
+    private final java.util.concurrent.ExecutorService audioExecutor = Executors.newSingleThreadExecutor();
+    private final java.util.concurrent.ConcurrentLinkedQueue<String> ttsQueue = new java.util.concurrent.ConcurrentLinkedQueue<>();
+    private volatile boolean audioStreamingActive = false;
+    // 句末回调去重：避免同一句被重复处理两次
+    private final java.util.Set<String> processedSentenceIds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
     public SpeechTranscriberTool() {
         cnt=0;
@@ -71,6 +77,9 @@ public class SpeechTranscriberTool {
         url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
         isRecording=false;
         this.appKey = appKey;
+        // 读取热词词表与定制模型ID（可选）
+        customizationId = System.getenv().getOrDefault("ALIYUN_NLS_CUSTOMIZATION_ID", "").trim();
+        vocabularyId = System.getenv().getOrDefault("ALIYUN_NLS_VOCABULARY_ID", "").trim();
         //应用全局创建一个NlsClient实例，默认服务地址为阿里云线上服务地址。
         //获取token，实际使用时注意在accessToken.getExpireTime()过期前再次获取。
         AccessToken accessToken = new AccessToken(id, secret);
@@ -137,9 +146,16 @@ public class SpeechTranscriberTool {
                         //当前已处理的音频时长，单位为毫秒。
                         ", time: " + response.getTransSentenceTime());
 
+                // 去重：同一task/index + 文本 只处理一次
+                String sentenceKey = response.getTaskId() + "-" + response.getTransSentenceIndex() + ":" + String.valueOf(response.getTransSentenceText()).trim();
+                if (!processedSentenceIds.add(sentenceKey)) {
+                    logger.debug("Skip duplicated sentence: {}", sentenceKey);
+                    return;
+                }
+
                 short characterId = (short) (sessionId.charAt(sessionId.length() - 1)-'0');
                 System.out.println("lwj会话id是:"+sessionId);
-                sendToAiTool.sendToAi(sessionId,response.getTransSentenceText(),characterId);
+                // 移除重复调用：避免通过 SendToAiTool 再次触发 aiChatService.chat
 
                 // Stream AI text to frontend via WebSocket and then TTS audio
                 try {
@@ -152,11 +168,16 @@ public class SpeechTranscriberTool {
                                 .subscribe(
                                         chunk -> {
                                             aiTextBuilder.append(chunk);
-                                            // send ai text chunk
+                                            // 文本分片立即推送到前端
                                             Map<String, Object> msg = new HashMap<>();
                                             msg.put("type", "ai_text");
                                             msg.put("chunk", chunk);
                                             safeSendText(session, msg);
+
+                                            // 从累计文本中提取可播放的分句，尽早启动TTS
+                                            for (String seg : extractFlushableSegments(aiTextBuilder)) {
+                                                enqueueTtsSegment(seg, sessionId);
+                                            }
                                         },
                                         error -> {
                                             Map<String, Object> msg = new HashMap<>();
@@ -165,9 +186,11 @@ public class SpeechTranscriberTool {
                                             safeSendText(session, msg);
                                         },
                                         () -> {
-                                            // After AI text completes, start TTS audio streaming
-                                            String aiText = aiTextBuilder.toString();
-                                            streamTtsAndSend(aiText, sessionId);
+                                            // 完成时若仍有剩余，作为最后一段播放
+                                            String remainder = aiTextBuilder.toString().trim();
+                                            if (!remainder.isEmpty()) {
+                                                enqueueTtsSegment(remainder, sessionId);
+                                            }
                                         }
                                 );
                     }
@@ -181,6 +204,8 @@ public class SpeechTranscriberTool {
             @Override
             public void onTranscriptionComplete(SpeechTranscriberResponse response) {
                 System.out.println("task_id: " + response.getTaskId() + ", name: " + response.getName() + ", status: " + response.getStatus());
+                // 清理去重状态，避免下次会话受到影响
+                processedSentenceIds.clear();
             }
 
             @Override
@@ -225,28 +250,39 @@ public class SpeechTranscriberTool {
             // Notify audio start
             Map<String, Object> start = new HashMap<>();
             start.put("type", "audio_start");
-            safeSendText(session, start);
+            // 关键：同步发送audio_start，保证其在二进制音频之前到达前端，避免首帧被后续重置逻辑丢弃
+            try {
+                String json = objectMapper.writeValueAsString(start);
+                if (isSessionOpen(session)) session.sendMessage(new TextMessage(json));
+            } catch (Exception ex) {
+                logger.warn("WebSocket text send failed (audio_start): {}", ex.toString());
+            }
 
-            byte[] buf = new byte[4096];
+            // 使用更小的缓冲区以更快将音频分片推送到前端，降低首帧延迟
+            byte[] buf = new byte[2048];
             int read;
             while ((read = is.read(buf)) != -1) {
                 if (stopAudioStreaming) break;
                 byte[] chunk = new byte[read];
                 System.arraycopy(buf, 0, chunk, 0, read);
-                // serialize binary writes via executor
-                sendExecutor.execute(() -> {
-                    try {
-                        if (isSessionOpen(session)) session.sendMessage(new BinaryMessage(chunk));
-                    } catch (Exception ex) {
-                        logger.warn("WebSocket binary send failed: {}", ex.toString());
-                    }
-                });
+                // 直接发送二进制消息，避免排队带来的额外延迟
+                try {
+                    if (isSessionOpen(session)) session.sendMessage(new BinaryMessage(chunk));
+                } catch (Exception ex) {
+                    logger.warn("WebSocket binary send failed: {}", ex.toString());
+                }
             }
 
             // Notify audio end
             Map<String, Object> end = new HashMap<>();
             end.put("type", "audio_end");
-            safeSendText(session, end);
+            // 同步发送audio_end，保持与audio_start一致的顺序保证
+            try {
+                String json = objectMapper.writeValueAsString(end);
+                if (isSessionOpen(session)) session.sendMessage(new TextMessage(json));
+            } catch (Exception ex) {
+                logger.warn("WebSocket text send failed (audio_end): {}", ex.toString());
+            }
             stopAudioStreaming = false;
         } catch (Exception e) {
             logger.error("TTS streaming failed", e);
@@ -254,6 +290,54 @@ public class SpeechTranscriberTool {
             err.put("type", "audio_error");
             err.put("message", String.valueOf(e.getMessage()));
             safeSendText(session, err);
+        }
+    }
+
+    // 将累计的AI文本按句号/问号/感叹号等分割，或达到长度阈值时切片
+    private java.util.List<String> extractFlushableSegments(StringBuilder builder) {
+        java.util.List<String> segments = new java.util.ArrayList<>();
+        int lastCut = 0;
+        for (int i = 0; i < builder.length(); i++) {
+            char c = builder.charAt(i);
+            boolean isBoundary = (c == '。' || c == '！' || c == '？' || c == '!' || c == '?' || c == '…' || c == '\n');
+            if (isBoundary) {
+                int end = i + 1;
+                if (end - lastCut > 0) {
+                    segments.add(builder.substring(lastCut, end).trim());
+                }
+                lastCut = end;
+            }
+        }
+        // 长度兜底：若没有边界但长度超过一定阈值，提前切片
+        final int MIN_CHARS = 40;
+        if (segments.isEmpty() && builder.length() - lastCut >= MIN_CHARS) {
+            segments.add(builder.substring(lastCut).trim());
+            lastCut = builder.length();
+        }
+        // 从builder中删除已切分的部分
+        if (lastCut > 0) {
+            builder.delete(0, lastCut);
+        }
+        return segments;
+    }
+
+    // 入队并触发串行播放
+    private void enqueueTtsSegment(String segment, String sessionId) {
+        if (segment == null || segment.isBlank()) return;
+        ttsQueue.offer(segment);
+        if (!audioStreamingActive) {
+            audioStreamingActive = true;
+            audioExecutor.execute(() -> {
+                try {
+                    while (isSessionOpen(boundSession)) {
+                        String seg = ttsQueue.poll();
+                        if (seg == null) break;
+                        streamTtsAndSend(seg, sessionId);
+                    }
+                } finally {
+                    audioStreamingActive = false;
+                }
+            });
         }
     }
 
@@ -308,6 +392,8 @@ public class SpeechTranscriberTool {
             //设置训练后的定制热词id。
             //transcriber.addCustomedParam("vocabulary_id","你的定制热词id");
 
+            // 应用定制模型与热词词表（如已配置）
+            applyHotwordAndCustomization(transcriber);
             //此方法将以上参数设置序列化为JSON发送给服务端，并等待服务端确认。
             transcriber.start();
 
@@ -374,6 +460,8 @@ public class SpeechTranscriberTool {
                 //设置训练后的定制热词id。
                 //transcriber.addCustomedParam("vocabulary_id","你的定制热词id");
 
+                // 应用定制模型与热词词表（如已配置）
+                applyHotwordAndCustomization(transcriber);
                 //此方法将以上参数设置序列化为JSON发送给服务端，并等待服务端确认。
                 transcriber.start();
             }
@@ -391,6 +479,22 @@ public class SpeechTranscriberTool {
             System.err.println(e.getMessage());
         } finally {
 
+        }
+    }
+
+    // 在ASR启动前应用定制模型与热词词表
+    private void applyHotwordAndCustomization(SpeechTranscriber transcriber) {
+        try {
+            if (customizationId != null && !customizationId.isBlank()) {
+                logger.info("Apply customization_id: {}", customizationId);
+                transcriber.addCustomedParam("customization_id", customizationId);
+            }
+            if (vocabularyId != null && !vocabularyId.isBlank()) {
+                logger.info("Apply vocabulary_id: {}", vocabularyId);
+                transcriber.addCustomedParam("vocabulary_id", vocabularyId);
+            }
+        } catch (Exception ex) {
+            logger.warn("Apply hotword/customization failed: {}", ex.toString());
         }
     }
 

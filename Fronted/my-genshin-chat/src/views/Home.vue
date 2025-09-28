@@ -741,7 +741,8 @@ async function setupMicCapture(): Promise<void> {
   mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
   mediaSource = audioContext.createMediaStreamSource(mediaStream);
-  scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+  // 减小缓冲区以更快推送语音上行数据，降低识别延迟
+  scriptNode = audioContext.createScriptProcessor(2048, 1, 1);
   scriptNode.onaudioprocess = (e) => {
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
     if (isMuted.value) return; // 静音时不发送音频
@@ -765,6 +766,8 @@ async function setupMicCapture(): Promise<void> {
 function handleWsText(msg: any) {
   const t = msg?.type;
   if (t === 'ai_text') {
+    // 语音通话期间不在前端会话区展示AI文本分片（仍然会写入Redis供上下文使用）
+    if (isCalling.value) return;
     if (wsAiIndex == null) { conversation.value.push({ role: 'ai', content: '' }); wsAiIndex = conversation.value.length - 1; }
     const chunk = typeof msg.chunk === 'string' ? msg.chunk : '';
     conversation.value[wsAiIndex].content += chunk;
@@ -784,9 +787,13 @@ function handleWsText(msg: any) {
 }
 
 function prepareIncomingPlayback() {
+  // 开始新一段音频：仅重置头解析状态，不打断已调度播放，保持串行队列
   wavHeaderParsed = false;
   headerBuffer = null;
-  wsPlayhead = audioContext ? audioContext.currentTime : 0;
+  // 若当前没有已调度的buffer，则将播放指针设为当前时间；否则保持指针，保证新段在上一段之后播放
+  if (pendingSources.length === 0) {
+    wsPlayhead = audioContext ? audioContext.currentTime : 0;
+  }
   try { audioContext?.resume(); } catch {}
 }
 

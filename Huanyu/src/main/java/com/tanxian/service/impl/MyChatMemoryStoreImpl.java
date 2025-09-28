@@ -2,6 +2,7 @@ package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.tanxian.common.LoginUserContext;
+import com.tanxian.resp.LoginResp;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.entity.ChatSession;
 import com.tanxian.exception.BusinessException;
@@ -120,7 +121,20 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             String content = systemMessageCache.get(templateKey);
 
             if (StringUtils.hasText(content)) {
-                return SystemMessage.from(content);
+                // 动态追加系统指令：昵称与回复长度控制
+                String nickname = "旅行者";
+                try {
+                    LoginResp loginResp = LoginUserContext.getUser();
+                    if (loginResp != null && StringUtils.hasText(loginResp.getNickname())) {
+                        nickname = loginResp.getNickname();
+                    }
+                } catch (Exception ignored) {}
+
+                String dynamic = "\n\n用户昵称：" + nickname + "。"
+                        + ("请约每十句带上一句用户的昵称，并且要自然的带上~。")
+                        + "请将回复控制在约50字内，保持角色特色和自然语调。";
+
+                return SystemMessage.from(content + dynamic);
             }
 
             // 没找到模板时抛出异常

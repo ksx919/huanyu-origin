@@ -181,19 +181,26 @@ public class QiniuUploadUtil {
         Auth auth = Auth.create(qiniuConfig.getAccessKey(), qiniuConfig.getSecretKey());
         String upToken = auth.uploadToken(qiniuConfig.getBucketName());
 
-        try {
-            Response response = uploadManager.put(data, fileKey, upToken);
-            if (response.isOK()) {
-                LOG.info("音频字节上传成功(指定键): {}", fileKey);
-                return buildFileUrl(fileKey);
-            } else {
-                LOG.error("音频字节上传失败(指定键)，响应码: {}, 响应体: {}", response.statusCode, response.bodyString());
-                throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+        int maxAttempts = 3;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                // 显式指定 MIME 类型为 audio/wav（部分环境下基于扩展名推断可能不稳定）
+                Response response = uploadManager.put(data, fileKey, upToken, null, "audio/wav", false);
+                if (response.isOK()) {
+                    LOG.info("音频字节上传成功(指定键) attempt={} key={}", attempt, fileKey);
+                    return buildFileUrl(fileKey);
+                } else {
+                    LOG.warn("音频字节上传失败(指定键) attempt={} code={} body={}", attempt, response.statusCode, response.bodyString());
+                }
+            } catch (QiniuException e) {
+                LOG.warn("七牛云上传异常(指定键) attempt={} msg={}", attempt, e.getMessage());
+                if (attempt == maxAttempts) {
+                    LOG.error("七牛云上传最终失败(指定键): {}", e.getMessage(), e);
+                    throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
+                }
             }
-        } catch (QiniuException e) {
-            LOG.error("七牛云上传异常(指定键): {}", e.getMessage(), e);
-            throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
         }
+        throw new BusinessException(BusinessExceptionEnum.QINIU_UPLOAD_FAILED);
     }
 
     /**

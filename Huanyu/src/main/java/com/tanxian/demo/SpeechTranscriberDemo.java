@@ -25,6 +25,9 @@ import org.springframework.stereotype.Component;
 public class SpeechTranscriberDemo {
     private static volatile String result;
     private String appKey,id,secret,url;
+    // 可选：阿里云定制模型与热词词表ID（通过环境变量注入）
+    private String customizationId;
+    private String vocabularyId;
     private NlsClient client;
     private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberDemo.class);
 
@@ -35,6 +38,9 @@ public class SpeechTranscriberDemo {
         secret = "ELs3CmZ5mSsgNTmG1VJnoqrqcrTrgy";
         url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
         this.appKey = appKey;
+        // 读取热词词表与定制模型ID（可选）
+        customizationId = System.getenv().getOrDefault("ALIYUN_NLS_CUSTOMIZATION_ID", "").trim();
+        vocabularyId = System.getenv().getOrDefault("ALIYUN_NLS_VOCABULARY_ID", "").trim();
         //应用全局创建一个NlsClient实例，默认服务地址为阿里云线上服务地址。
         //获取token，实际使用时注意在accessToken.getExpireTime()过期前再次获取。
         AccessToken accessToken = new AccessToken(id, secret);
@@ -163,6 +169,8 @@ public class SpeechTranscriberDemo {
             //设置训练后的定制热词id。
             //transcriber.addCustomedParam("vocabulary_id","你的定制热词id");
 
+            // 应用定制模型与热词词表（如已配置）
+            applyHotwordAndCustomization(transcriber);
             //此方法将以上参数设置序列化为JSON发送给服务端，并等待服务端确认。
             transcriber.start();
 
@@ -203,6 +211,22 @@ public class SpeechTranscriberDemo {
 
     public void shutdown() {
         client.shutdown();
+    }
+
+    // 在ASR启动前应用定制模型与热词词表
+    private void applyHotwordAndCustomization(SpeechTranscriber transcriber) {
+        try {
+            if (customizationId != null && !customizationId.isBlank()) {
+                logger.info("Apply customization_id: {}", customizationId);
+                transcriber.addCustomedParam("customization_id", customizationId);
+            }
+            if (vocabularyId != null && !vocabularyId.isBlank()) {
+                logger.info("Apply vocabulary_id: {}", vocabularyId);
+                transcriber.addCustomedParam("vocabulary_id", vocabularyId);
+            }
+        } catch (Exception ex) {
+            logger.warn("Apply hotword/customization failed: {}", ex.toString());
+        }
     }
 
 }
