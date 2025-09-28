@@ -1,12 +1,15 @@
 package com.tanxian.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.tanxian.common.LoginUserContext;
+import com.tanxian.resp.LoginResp;
 import com.tanxian.entity.ChatMessage;
 import com.tanxian.entity.ChatSession;
 import com.tanxian.exception.BusinessException;
 import com.tanxian.exception.BusinessExceptionEnum;
 import com.tanxian.mapper.ChatMessageMapper;
 import com.tanxian.mapper.ChatSessionMapper;
+import com.tanxian.service.MessageTurnToAiVoiceTool;
 import com.tanxian.service.MyChatMemoryStore;
 import dev.langchain4j.data.message.AiMessage;
 import dev.langchain4j.data.message.ChatMessageDeserializer;
@@ -28,12 +31,10 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
@@ -50,8 +51,21 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     @Autowired
     private ChatSessionMapper chatSessionMapper;
 
+    @Autowired
+    MessageTurnToAiVoiceTool messageTurnToAiVoiceTool;
+
     // 系统消息模板缓存（从本地文件加载）
     private final Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
+    // 标记不需要持久化到数据库的会话（例如语音通话会话）
+    private final Set<String> ephemeralSessions = ConcurrentHashMap.newKeySet();
+    // 语音通话临时标记使用的 Redis 前缀与 TTL 设置
+    private static final String EPHEMERAL_KEY_PREFIX = "chat:ephemeral:";
+    private static final Duration EPHEMERAL_TTL = Duration.ofMinutes(10);
+    // 为避免连接关闭与入库之间的竞态，这里为取消标记设置一个短暂保护期
+    private static final Duration EPHEMERAL_GRACE_TTL = Duration.ofSeconds(3);
+    // 语音阶段产生的消息哈希集合前缀与TTL（用于永不入库）
+    private static final String EPHEMERAL_MSG_SET_PREFIX = "chat:ephemeral:msg:";
+    private static final Duration EPHEMERAL_MSG_TTL = Duration.ofHours(6);
 
     // 标记是否已初始化
     private volatile boolean initialized = false;
@@ -116,7 +130,19 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             String content = systemMessageCache.get(templateKey);
 
             if (StringUtils.hasText(content)) {
-                return SystemMessage.from(content);
+                // 动态追加系统指令：昵称与回复长度控制
+                String nickname = "旅行者";
+                try {
+                    LoginResp loginResp = LoginUserContext.getUser();
+                    if (loginResp != null && StringUtils.hasText(loginResp.getNickname())) {
+                        nickname = loginResp.getNickname();
+                    }
+                } catch (Exception ignored) {}
+
+                String dynamic = "\n\n用户昵称：" + nickname + "。"
+                        + "请将回复控制在约50字内，保持角色特色和自然语调。";
+
+                return SystemMessage.from(content + dynamic);
             }
 
             // 没找到模板时抛出异常
@@ -231,7 +257,8 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             log.info("Redis中无数据，从MySQL查询");
             LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
             queryWrapper.eq(ChatMessage::getSessionId, sessionId)
-                    .orderByAsc(ChatMessage::getCreatedAt);
+                    .ne(ChatMessage::getMessageType, "SYSTEM")
+                    .orderByAsc(ChatMessage::getCreatedAt); // 按时间升序获取所有消息
             List<ChatMessage> dbMessages = chatMessageMapper.selectList(queryWrapper);
 
             if (dbMessages == null || dbMessages.isEmpty()) {
@@ -265,28 +292,79 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                     .filter(msg -> !(msg instanceof SystemMessage))
                     .collect(Collectors.toList());
 
+            // 更新Redis缓存（仅存储内存窗口内的消息）
             String redisKey = getRedisKey(sessionId);
             String json = ChatMessageSerializer.messagesToJson(nonSystemMessages);
             redisTemplate.opsForValue().set(redisKey, json, Duration.ofDays(1));
             log.info("已更新Redis缓存");
-
-            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
-            countWrapper.eq(ChatMessage::getSessionId, sessionId)
-                    .ne(ChatMessage::getMessageType, "SYSTEM");
-            long existingCount = chatMessageMapper.selectCount(countWrapper);
-
-            if (existingCount < nonSystemMessages.size()) {
-                List<ChatMessage> allDbMsgs = convertToDbMessages(sessionId, nonSystemMessages);
-                List<ChatMessage> newDbMsgs = allDbMsgs.subList((int) existingCount, allDbMsgs.size());
-                log.info("数据库已有 {} 条非系统消息，本次追加 {} 条", existingCount, newDbMsgs.size());
-                for (ChatMessage msg : newDbMsgs) {
-                    chatMessageMapper.insert(msg);
+            
+            // 若为短暂会话（语音通话），跳过数据库持久化
+            if (isEphemeralSession(sessionId)) {
+                log.info("会话 {} 标记为临时（语音通话），跳过数据库存储", sessionId);
+                // 记录语音阶段的最新消息哈希，避免之后因为窗口缓存导致误入库
+                try {
+                    if (!nonSystemMessages.isEmpty()) {
+                        dev.langchain4j.data.message.ChatMessage lastMessage =
+                                nonSystemMessages.get(nonSystemMessages.size() - 1);
+                        recordEphemeralMessageHash(sessionId, lastMessage);
+                    }
+                } catch (Exception e) {
+                    log.warn("记录语音阶段消息哈希失败: sessionId={}", sessionId, e);
                 }
             } else {
-                log.info("数据库记录已是最新，无需追加");
+                // 完整存储所有消息到数据库（不受内存窗口限制）
+                storeAllMessagesToDatabase(sessionId, nonSystemMessages);
             }
+            
         } catch (Exception e) {
             log.error("更新会话消息失败，sessionId: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * 标记某个会话为临时（不入库）
+     */
+    public void markEphemeralSession(String sessionId) {
+        try {
+            ephemeralSessions.add(sessionId);
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            // 使用 Redis 写入标记并设置较长 TTL，保证多实例下共享
+            redisTemplate.opsForValue().set(key, "1", EPHEMERAL_TTL);
+            log.info("已标记临时会话，不入库（Redis TTL={}）: {}", EPHEMERAL_TTL, sessionId);
+        } catch (Exception e) {
+            log.warn("标记临时会话到 Redis 失败，退回仅本地标记: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * 取消临时标记
+     */
+    public void unmarkEphemeralSession(String sessionId) {
+        try {
+            ephemeralSessions.remove(sessionId);
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            // 直接删除可能与入库过程竞争，这里设置一个短暂保护 TTL，避免尾段消息误入库
+            redisTemplate.opsForValue().set(key, "1", EPHEMERAL_GRACE_TTL);
+            log.info("已取消本地临时标记，Redis 设置短暂保护期（{}）: {}", EPHEMERAL_GRACE_TTL, sessionId);
+        } catch (Exception e) {
+            log.warn("取消临时标记时 Redis 操作失败，仅移除本地标记: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * 判断是否为临时会话
+     */
+    public boolean isEphemeralSession(String sessionId) {
+        // 先检查本地标记
+        if (ephemeralSessions.contains(sessionId)) return true;
+        // 再检查 Redis 标记，保证多实例与时序安全
+        try {
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            String val = redisTemplate.opsForValue().get(key);
+            return StringUtils.hasText(val);
+        } catch (Exception e) {
+            log.warn("检查 Redis 临时会话标记失败，回退到本地标记: {}", sessionId, e);
+            return false;
         }
     }
 
@@ -383,40 +461,264 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     }
 
     /**
-     * 将langchain4j消息转换为数据库消息格式
+     * 完整存储所有消息到数据库，不受内存窗口限制
+     * 这个方法会存储会话中的每一条消息，而不仅仅是内存窗口中的消息
      */
-    private List<ChatMessage> convertToDbMessages(String sessionId, List<dev.langchain4j.data.message.ChatMessage> messages) {
-        return messages.stream()
-                .filter(message -> !(message instanceof SystemMessage))
-                .map(message -> {
-                    try {
-                        ChatMessage dbMessage = new ChatMessage();
-                        dbMessage.setSessionId(sessionId);
+    private void storeAllMessagesToDatabase(String sessionId, List<dev.langchain4j.data.message.ChatMessage> currentWindowMessages) {
+        try {
+            // 获取数据库中已存在的消息数量
+            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM");
+            Long existingCount = chatMessageMapper.selectCount(countWrapper);
+            
+            log.info("会话 {} 数据库中已有 {} 条消息，当前内存窗口有 {} 条消息", sessionId, existingCount, currentWindowMessages.size());
+            
+            // 检查是否有新消息需要存储
+            // 由于LangChain4j的内存窗口限制，我们需要检测新增的消息
+            if (!currentWindowMessages.isEmpty()) {
+                // 获取当前窗口中的最后一条消息
+                dev.langchain4j.data.message.ChatMessage lastMessage = currentWindowMessages.get(currentWindowMessages.size() - 1);
 
-                        if (message instanceof UserMessage) {
-                            String content = ((UserMessage) message).singleText();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
-                            dbMessage.setMessageType("USER");
-                        } else if (message instanceof AiMessage) {
-                            String content = ((AiMessage) message).text();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
-                            dbMessage.setMessageType("ASSISTANT");
-                        } else {
-                            String content = message.toString();
-                            dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
-                            dbMessage.setMessageType("USER");
-                        }
-
-                        dbMessage.setCreatedAt(LocalDateTime.now());
-                        return dbMessage;
-                    } catch (Exception e) {
-                        log.error("转换数据库消息失败: {}", message, e);
-                        return null;
+                // 如果最后一条消息是在语音阶段产生过（哈希存在于Redis集合），则永不入库
+                if (isEphemeralPhaseMessage(sessionId, lastMessage)) {
+                    log.info("跳过语音阶段消息的入库（哈希命中）: sessionId={}", sessionId);
+                    return;
+                }
+                
+                // 检查这条消息是否已经存在于数据库中
+                if (!isMessageExistsInDatabase(sessionId, lastMessage)) {
+                    // 如果最后一条消息不存在，说明有新消息需要存储
+                    ChatMessage dbMessage = convertSingleMessageToDb(sessionId, lastMessage);
+                    if (dbMessage != null) {
+                        chatMessageMapper.insert(dbMessage);
+                        log.info("成功存储新消息到数据库: {} - {}", dbMessage.getMessageType(), 
+                                dbMessage.getContent().length() > 50 ? 
+                                dbMessage.getContent().substring(0, 50) + "..." : 
+                                dbMessage.getContent());
+                        // if(dbMessage.getMessageType().equals("ASSISTANT")) {
+                        //     messageTurnToAiVoiceTool.turnToAiVoice(dbMessage.getContent(),dbMessage.getSessionId());
+                        // }
                     }
-                })
-                .filter(Objects::nonNull)
-                .collect(Collectors.toList());
+                } else {
+                    log.debug("消息已存在于数据库中，无需重复存储");
+                }
+            }
+            
+        } catch (Exception e) {
+            log.error("完整存储消息到数据库失败，sessionId: {}", sessionId, e);
+        }
     }
+
+    /**
+     * 记录语音阶段产生的消息哈希到 Redis 集合
+     */
+    private void recordEphemeralMessageHash(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String key = EPHEMERAL_MSG_SET_PREFIX + sessionId;
+            String hash = hashMessageForDedup(message);
+            if (StringUtils.hasText(hash)) {
+                redisTemplate.opsForSet().add(key, hash);
+                redisTemplate.expire(key, EPHEMERAL_MSG_TTL);
+                log.debug("记录语音阶段消息哈希: {} -> {}", sessionId, hash);
+            }
+        } catch (Exception e) {
+            log.warn("记录语音阶段消息哈希失败: sessionId={}", sessionId, e);
+        }
+    }
+
+    /**
+     * 判断消息是否属于语音阶段（哈希在 Redis 集合中）
+     */
+    private boolean isEphemeralPhaseMessage(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String key = EPHEMERAL_MSG_SET_PREFIX + sessionId;
+            String hash = hashMessageForDedup(message);
+            if (!StringUtils.hasText(hash)) return false;
+            Boolean member = redisTemplate.opsForSet().isMember(key, hash);
+            return Boolean.TRUE.equals(member);
+        } catch (Exception e) {
+            log.warn("检查语音阶段消息哈希失败: sessionId={}", sessionId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 为消息生成去重哈希（类型+内容 的 SHA-1）
+     */
+    private String hashMessageForDedup(dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String type = getMessageType(message);
+            String content = getMessageContent(message);
+            String payload = type + "|" + (content == null ? "" : content);
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] digest = md.digest(payload.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("生成消息哈希失败: {}", message, e);
+            return null;
+        }
+    }
+    
+    /**
+     * 检查消息是否已存在于数据库中
+     */
+    private boolean isMessageExistsInDatabase(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            // 获取数据库中最后几条消息进行比较
+            LambdaQueryWrapper<ChatMessage> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(ChatMessage::getSessionId, sessionId)
+                    .ne(ChatMessage::getMessageType, "SYSTEM")
+                    .orderByDesc(ChatMessage::getCreatedAt)
+                    .last("LIMIT 5"); // 只检查最后5条消息
+            
+            List<ChatMessage> recentMessages = chatMessageMapper.selectList(queryWrapper);
+            
+            String messageContent = getMessageContent(message);
+            String messageType = getMessageType(message);
+            
+            // 检查是否有相同内容和类型的消息
+            return recentMessages.stream().anyMatch(dbMsg -> 
+                messageType.equals(dbMsg.getMessageType()) && 
+                messageContent.equals(dbMsg.getContent())
+            );
+            
+        } catch (Exception e) {
+            log.error("检查消息是否存在时发生错误", e);
+            return false;
+        }
+    }
+    
+    /**
+     * 将单条LangChain4j消息转换为数据库消息
+     */
+    private ChatMessage convertSingleMessageToDb(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            ChatMessage dbMessage = new ChatMessage();
+            dbMessage.setSessionId(sessionId);
+            
+            if (message instanceof UserMessage) {
+                String content = ((UserMessage) message).singleText();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
+                dbMessage.setMessageType("USER");
+            } else if (message instanceof AiMessage) {
+                String content = ((AiMessage) message).text();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
+                dbMessage.setMessageType("ASSISTANT");
+            } else {
+                String content = message.toString();
+                dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
+                dbMessage.setMessageType("USER");
+            }
+            
+            dbMessage.setCreatedAt(LocalDateTime.now());
+            return dbMessage;
+            
+        } catch (Exception e) {
+            log.error("转换单条消息失败: {}", message, e);
+            return null;
+        }
+    }
+    
+    /**
+     * 获取消息内容
+     */
+    private String getMessageContent(dev.langchain4j.data.message.ChatMessage message) {
+        if (message instanceof UserMessage) {
+            return ((UserMessage) message).singleText();
+        } else if (message instanceof AiMessage) {
+            return ((AiMessage) message).text();
+        } else {
+            return message.toString();
+        }
+    }
+    
+    /**
+     * 获取消息类型
+     */
+    private String getMessageType(dev.langchain4j.data.message.ChatMessage message) {
+        if (message instanceof UserMessage) {
+            return "USER";
+        } else if (message instanceof AiMessage) {
+            return "ASSISTANT";
+        } else {
+            return "USER";
+        }
+    }
+//    private void insertNewMessagesOnly(String sessionId, List<dev.langchain4j.data.message.ChatMessage> newMessages) {
+//        try {
+//            // 获取数据库中已存在的消息数量
+//            LambdaQueryWrapper<ChatMessage> countWrapper = new LambdaQueryWrapper<>();
+//            countWrapper.eq(ChatMessage::getSessionId, sessionId)
+//                    .ne(ChatMessage::getMessageType, "SYSTEM");
+//            Long existingCount = chatMessageMapper.selectCount(countWrapper);
+//
+//            log.info("会话 {} 数据库中已有 {} 条消息，新消息列表有 {} 条", sessionId, existingCount, newMessages.size());
+//
+//            // 如果新消息数量大于已存在的消息数量，则插入差异部分
+//            if (newMessages.size() > existingCount) {
+//                List<dev.langchain4j.data.message.ChatMessage> messagesToInsert =
+//                    newMessages.subList(existingCount.intValue(), newMessages.size());
+//
+//                List<ChatMessage> dbMessages = convertToDbMessages(sessionId, messagesToInsert);
+//
+//                if (!dbMessages.isEmpty()) {
+//                    // 逐条插入新消息（MyBatis-Plus BaseMapper没有批量插入方法）
+//                    for (ChatMessage dbMessage : dbMessages) {
+//                        chatMessageMapper.insert(dbMessage);
+//                    }
+//                    log.info("成功插入 {} 条新消息到数据库", dbMessages.size());
+//                } else {
+//                    log.info("没有新消息需要插入");
+//                }
+//            } else {
+//                log.info("消息数量未增加，无需插入新消息");
+//            }
+//
+//        } catch (Exception e) {
+//            log.error("增量插入消息失败，sessionId: {}", sessionId, e);
+//        }
+//    }
+
+//    /**
+//     * 将langchain4j消息转换为数据库消息格式
+//     */
+//    private List<ChatMessage> convertToDbMessages(String sessionId, List<dev.langchain4j.data.message.ChatMessage> messages) {
+//        return messages.stream()
+//                .filter(message -> !(message instanceof SystemMessage))
+//                .map(message -> {
+//                    try {
+//                        ChatMessage dbMessage = new ChatMessage();
+//                        dbMessage.setSessionId(sessionId);
+//
+//                        if (message instanceof UserMessage) {
+//                            String content = ((UserMessage) message).singleText();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空消息");
+//                            dbMessage.setMessageType("USER");
+//                        } else if (message instanceof AiMessage) {
+//                            String content = ((AiMessage) message).text();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "空回复");
+//                            dbMessage.setMessageType("ASSISTANT");
+//                        } else {
+//                            String content = message.toString();
+//                            dbMessage.setContent(StringUtils.hasText(content) ? content : "未知类型消息");
+//                            dbMessage.setMessageType("USER");
+//                        }
+//
+//                        dbMessage.setCreatedAt(LocalDateTime.now());
+//                        return dbMessage;
+//                    } catch (Exception e) {
+//                        log.error("转换数据库消息失败: {}", message, e);
+//                        return null;
+//                    }
+//                })
+//                .filter(Objects::nonNull)
+//                .collect(Collectors.toList());
+//    }
 
     /**
      * 记录会话信息
@@ -431,6 +733,7 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             if (existingSession == null) {
                 ChatSession chatSession = new ChatSession();
                 chatSession.setSessionId(sessionId);
+                chatSession.setUserId(LoginUserContext.getId());
                 chatSession.setCharacterType(characterType);
                 chatSession.setCharacterName(getCharacterNameByType(characterType));
                 chatSession.setCreatedAt(LocalDateTime.now());
@@ -482,4 +785,5 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
         private String type;
         private String content;
     }
+
 }

@@ -1,1 +1,7 @@
 /log/
+/**.pcm
+
+# 忽略大文件
+GPT-SoVITS-source-only/ffmpeg.exe
+GPT-SoVITS-source-only/ffprobe.exe
+*.exe

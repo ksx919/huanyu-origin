@@ -1,0 +1,1 @@
+{"GPT": {"v1": "GPT_SoVITS/pretrained_models/s1bert25hz-2kh-longer-epoch=68e-step=50232.ckpt", "v2": "GPT_SoVITS/pretrained_models/s1v3.ckpt", "v3": "GPT_SoVITS/pretrained_models/s1v3.ckpt"}, "SoVITS": {"v1": "GPT_SoVITS/pretrained_models/s2G488k.pth", "v2": "GPT_SoVITS/pretrained_models/s2Gv3.pth"}}
