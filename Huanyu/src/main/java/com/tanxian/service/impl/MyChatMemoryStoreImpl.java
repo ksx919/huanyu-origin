@@ -131,7 +131,6 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
                 } catch (Exception ignored) {}
 
                 String dynamic = "\n\n用户昵称：" + nickname + "。"
-                        + ("请约每十句带上一句用户的昵称，并且要自然的带上~。")
                         + "请将回复控制在约50字内，保持角色特色和自然语调。";
 
                 return SystemMessage.from(content + dynamic);

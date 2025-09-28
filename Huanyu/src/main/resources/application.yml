@@ -119,3 +119,13 @@ qiniu:
   path-prefix: huanyu/avatar/
   # 文件大小限制（字节），默认10MB
   max-file-size: 104857600
+
+aliyun:
+  nls:
+    # 阿里云智能语音识别应用AppKey
+    appKey: ${ALIYUN_NLS_APP_KEY:}
+    # 阿里云AccessKeyId/Secret，建议通过环境变量或外部配置注入
+    accessKeyId: ${ALIYUN_NLS_ACCESS_KEY_ID:}
+    accessKeySecret: ${ALIYUN_NLS_ACCESS_KEY_SECRET:}
+    # 网关地址，默认上海区域。如需自定义可设置环境变量 NLS_GATEWAY_URL
+    gatewayUrl: ${NLS_GATEWAY_URL:wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1}

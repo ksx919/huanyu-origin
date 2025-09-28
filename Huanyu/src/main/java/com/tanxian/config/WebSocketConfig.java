@@ -1,7 +1,7 @@
 package com.tanxian.config;
 
 import com.tanxian.interceptor.WebSocketAuthInterceptor;
-import com.tanxian.service.impl.PcmAudioWebSocketHandler;
+import com.tanxian.handler.PcmAudioWebSocketHandler;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
 import org.springframework.web.socket.config.annotation.WebSocketConfigurer;

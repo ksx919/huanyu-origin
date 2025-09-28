@@ -1,9 +1,10 @@
-package com.tanxian.service.impl;
+package com.tanxian.handler;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
+import com.tanxian.config.AliyunNlsProperties;
 import com.alibaba.nls.client.AccessToken;
 import com.alibaba.nls.client.protocol.InputFormatEnum;
 import com.alibaba.nls.client.protocol.NlsClient;
@@ -32,26 +33,57 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 此示例演示了：
- * ASR实时识别API调用。
- * 动态获取token。获取Token具体操作，请参见：https://help.aliyun.com/document_detail/450514.html
- * 通过本地模拟实时流发送。
- * 识别耗时计算。
+ * WebSocket实时语音转文字处理器
+ * 
+ * 该类负责处理通过WebSocket传输的实时音频数据，将其转换为文字，并与AI聊天服务集成，
+ * 实现语音到文本的实时转录，并触发AI回复。主要功能包括：
+ * 1. 通过WebSocket接收实时音频流数据
+ * 2. 调用阿里云ASR服务进行实时语音识别
+ * 3. 将识别结果传递给AI聊天服务生成回复
+ * 4. 将AI回复通过TTS转换为语音并发送回客户端
+ * 
+ * 该类以原型作用域(@Scope("prototype"))注册为Spring Bean，为每个WebSocket会话创建独立实例
  */
 @Service
 @Scope("prototype")
-public class SpeechTranscriberTool {
+public class WebSocketSpeechTranscriber {
     @Autowired
     AiChatService aiChatService;
     @Autowired
     MessageTurnToAiVoiceTool messageTurnToAiVoiceTool;
+    @Autowired
+    public WebSocketSpeechTranscriber(AliyunNlsProperties props) {
+        cnt = 0;
+        isRecording = false;
+        this.appKey = props.getAppKey();
+        this.id = props.getAccessKeyId();
+        this.secret = props.getAccessKeySecret();
+        this.url = (props.getGatewayUrl() == null || props.getGatewayUrl().isBlank())
+                ? "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1"
+                : props.getGatewayUrl();
+        this.customizationId = props.getCustomizationId() == null ? "" : props.getCustomizationId().trim();
+        this.vocabularyId = props.getVocabularyId() == null ? "" : props.getVocabularyId().trim();
+
+        AccessToken accessToken = new AccessToken(this.id, this.secret);
+        try {
+            accessToken.apply();
+            System.out.println("get token: " + ", expire time: " + accessToken.getExpireTime());
+            if (this.url.isBlank()) {
+                client = new NlsClient(accessToken.getToken());
+            } else {
+                client = new NlsClient(this.url, accessToken.getToken());
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
 
     private String appKey,id,secret,url,sessionId;
-    // 可选：阿里云定制模型与热词词表ID（通过环境变量注入）
+    // 可选：阿里云定制模型与热词词表ID（通过配置注入）
     private String customizationId;
     private String vocabularyId;
     private NlsClient client;
-    private static final Logger logger = LoggerFactory.getLogger(SpeechTranscriberTool.class);
+    private static final Logger logger = LoggerFactory.getLogger(WebSocketSpeechTranscriber.class);
     public boolean isRecording;
     public SpeechTranscriber transcriber;
     public int cnt;
@@ -69,32 +101,7 @@ public class SpeechTranscriberTool {
     // 句末回调去重：避免同一句被重复处理两次
     private final java.util.Set<String> processedSentenceIds = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
-    public SpeechTranscriberTool() {
-        cnt=0;
-        appKey ="eM6lol9cMryNdqfB";
-        id = "LTAI5tQuhLijAPVnScpCKiPT";
-        secret = "ELs3CmZ5mSsgNTmG1VJnoqrqcrTrgy";
-        url = System.getenv().getOrDefault("NLS_GATEWAY_URL", "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1");
-        isRecording=false;
-        this.appKey = appKey;
-        // 读取热词词表与定制模型ID（可选）
-        customizationId = System.getenv().getOrDefault("ALIYUN_NLS_CUSTOMIZATION_ID", "").trim();
-        vocabularyId = System.getenv().getOrDefault("ALIYUN_NLS_VOCABULARY_ID", "").trim();
-        //应用全局创建一个NlsClient实例，默认服务地址为阿里云线上服务地址。
-        //获取token，实际使用时注意在accessToken.getExpireTime()过期前再次获取。
-        AccessToken accessToken = new AccessToken(id, secret);
-        try {
-            accessToken.apply();
-            System.out.println("get token: " + ", expire time: " + accessToken.getExpireTime());
-            if(url.isEmpty()) {
-                client = new NlsClient(accessToken.getToken());
-            }else {
-                client = new NlsClient(url, accessToken.getToken());
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
+    // 移除无参构造函数，防止绕过配置导致使用硬编码的凭证
 
     private SpeechTranscriberListener getTranscriberListener() {
 
@@ -342,14 +349,22 @@ public class SpeechTranscriberTool {
     }
 
     /**
-     * Interrupt current AI speech playback. Does not stop ASR recording.
+     * 中断当前AI语音播放
+     * 
+     * 该方法用于打断当前正在进行的TTS语音播放，但不会停止ASR录音过程。
+     * 适用于用户希望立即停止AI语音输出的场景，例如用户开始说话时自动打断AI语音。
      */
     public void interrupt() {
         stopAudioStreaming = true;
     }
 
-    //根据二进制数据大小计算对应的同等语音长度。
-    //sampleRate：支持8000或16000。
+    /**
+     * 根据二进制数据大小计算对应的同等语音长度
+     * 
+     * @param dataSize 数据大小（字节）
+     * @param sampleRate 采样率，支持8000或16000
+     * @return 对应的睡眠时间（毫秒）
+     */
     public static int getSleepDelta(int dataSize, int sampleRate) {
         // 仅支持16位采样。
         int sampleBytes = 16;
@@ -358,6 +373,14 @@ public class SpeechTranscriberTool {
         return (dataSize * 10 * 8000) / (160 * sampleRate);
     }
 
+    /**
+     * 处理本地音频文件
+     * 
+     * 该方法用于处理本地存储的音频文件，将其发送到阿里云ASR服务进行批量语音识别。
+     * 主要用于测试或处理预先录制的音频文件。
+     * 
+     * @param filepath 音频文件路径
+     */
     public void process(String filepath) {
         try {
             //创建实例、建立连接。
@@ -423,6 +446,15 @@ public class SpeechTranscriberTool {
     }
 
 
+    /**
+     * 处理通过WebSocket接收到的音频数据
+     * 
+     * 该方法接收实时音频数据块并发送到阿里云ASR服务进行语音识别。
+     * 如果是第一次调用，会初始化ASR连接和相关参数。
+     * 
+     * @param data 音频数据块
+     * @param sessionId 会话ID，用于标识不同的用户会话
+     */
     public void process(byte[] data,String sessionId) {
         try {
             this.sessionId = sessionId;
@@ -482,7 +514,13 @@ public class SpeechTranscriberTool {
         }
     }
 
-    // 在ASR启动前应用定制模型与热词词表
+    /**
+     * 应用定制模型与热词词表
+     * 
+     * 在ASR启动前应用定制语言模型和热词词表，以提高特定领域或术语的识别准确率。
+     * 
+     * @param transcriber 语音识别器实例
+     */
     private void applyHotwordAndCustomization(SpeechTranscriber transcriber) {
         try {
             if (customizationId != null && !customizationId.isBlank()) {

@@ -84,7 +84,7 @@
               />
               <button @click="sendTextMessage" class="send-btn">发送</button>
               <button @mousedown="startVoiceToText" @mouseup="stopVoiceToText" class="voice-to-text-btn" :class="{ recording: isRecording }">🎤</button>
-              <button @click="openCall" class="call-btn" title="语音通话">📞</button>
+              <button @click="openCall" class="call-btn" :title="canOpenCall ? '语音通话' : '请先发送消息后再申请通话'">📞</button>
             </div>
           </div>
           <!-- 语音通话弹窗 -->
@@ -104,6 +104,17 @@
           <!-- Toast 弹窗容器 -->
           <transition name="toast-fade">
             <div v-if="toastVisible" class="toast">{{ toastText }}</div>
+          </transition>
+
+          <!-- 通话资格提示弹窗 -->
+          <transition name="call-fade">
+            <div v-if="showCallHint" class="modal-overlay">
+              <div class="modal-card">
+                <div class="modal-title">提示</div>
+                <div class="modal-content">请先向该角色发送一条消息，再申请通话</div>
+                <button class="modal-ok" @click="showCallHint = false">我知道了</button>
+              </div>
+            </div>
           </transition>
 
           <!-- 语音识别加载遮罩 -->
@@ -149,6 +160,7 @@ const chatMode = ref<'voice' | 'text'>('voice');
 const isCalling = ref(false);
 const isMuted = ref(false);
 const isTranscribing = ref(false);
+const showCallHint = ref(false);
 const callStatusText = computed(() => {
   switch (connectionStatus.value) {
     case 'connecting': return '正在连接...';
@@ -265,6 +277,12 @@ const onAvatarError = (role: 'user' | 'ai') => {
 // --- 计算属性 ---
 const currentCharacterAvatar = computed(() => {
   return characters.value.find(c => c.id === selectedCharacter.value)?.avatar || '';
+});
+
+// 只有与当前角色发送过至少一条消息，才能申请语音通话
+const canOpenCall = computed(() => {
+  if (!selectedCharacter.value) return false;
+  return conversation.value.some(m => m.role === 'user');
 });
 
 // --- 核心逻辑 ---
@@ -398,6 +416,7 @@ const stopRealtimeVoice = () => {
 const openCall = () => {
   if (!hasToken.value) { showAuthWarning.value = true; showToast('请先登录以获取令牌'); return; }
   if (!selectedCharacter.value) { showToast('请先选择角色'); return; }
+  if (!canOpenCall.value) { showCallHint.value = true; return; }
   if (isCalling.value) { showToast('已在通话中'); return; }
   startRealtimeVoice();
 };
@@ -1229,6 +1248,43 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 
 .end-call-btn {
   background: #ff4d4f;
+  color: #fff;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* 通话资格提示弹窗样式 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-card {
+  width: 320px;
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 14px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.25);
+  padding: 20px;
+  text-align: center;
+}
+.modal-title {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.modal-content {
+  font-size: 14px;
+  color: #555;
+  margin-bottom: 14px;
+}
+.modal-ok {
+  background: #007bff;
   color: #fff;
   border: none;
   padding: 8px 16px;
