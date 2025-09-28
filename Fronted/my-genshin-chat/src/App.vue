@@ -153,8 +153,16 @@ body {
   color: white;
   text-decoration: none;
   margin-left: 20px;
+  transition: all 0.25s ease;
 }
 .header-content nav a:hover {
-  text-decoration: underline;
+  color: #38b6ff;
+  text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
+  text-decoration: none;
+}
+
+.header-content nav a.router-link-active {
+  color: #38b6ff;
+  text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
 }
 </style>
