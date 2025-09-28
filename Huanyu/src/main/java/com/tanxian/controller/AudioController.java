@@ -1,14 +1,11 @@
 package com.tanxian.controller;
 
-import com.tanxian.demo.SpeechTranscriberDemo;
-import com.tanxian.service.impl.SpeechTranscriberTool;
+import com.tanxian.handler.BatchSpeechTranscriber;
 import com.tanxian.common.CommonResp;
-import lombok.experimental.Accessors;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 
-import java.io.InputStream;
 import java.nio.file.Path;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -16,6 +13,10 @@ import java.nio.file.Paths;
 @RestController
 @RequestMapping("/audio")
 public class AudioController {
+
+    @Autowired
+    BatchSpeechTranscriber batchSpeechTranscriber;
+
     // 接收原始二进制流（Content-Type 需与前端一致，如 audio/wav）
     @PostMapping(value = "/upload-raw", consumes = {"audio/wav", MediaType.APPLICATION_OCTET_STREAM_VALUE})
     public CommonResp<String> uploadRawAudio(@RequestBody byte[] audioBytes) {
@@ -29,10 +30,8 @@ public class AudioController {
             Files.createDirectories(dir);
             Path file = dir.resolve("audio_" + System.currentTimeMillis() + ".wav");
             Files.write(file, audioBytes);
-
             // 调用语音识别
-            SpeechTranscriberDemo speechTranscriberDemo = new SpeechTranscriberDemo();
-            String result = speechTranscriberDemo.process(file.toString());
+            String result = batchSpeechTranscriber.process(file.toString());
 
             // 返回统一响应结构
             return CommonResp.success(result == null ? "" : result);

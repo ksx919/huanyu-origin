@@ -1,8 +1,9 @@
-package com.tanxian.service.impl;
+package com.tanxian.handler;
 
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tanxian.service.impl.MyChatMemoryStoreImpl;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -29,7 +30,7 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
     private volatile String sessionId;
     // 存储每个会话对应的SpeechTranscriberTool实例
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private final Map<String, SpeechTranscriberTool> sessionTools = new ConcurrentHashMap<>();
+    private final Map<String, WebSocketSpeechTranscriber> sessionTools = new ConcurrentHashMap<>();
     private final Map<String, String> voiceSessionIds = new ConcurrentHashMap<>();
     // 重点：处理客户端发来的二进制消息
     @Override
@@ -40,9 +41,9 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
             byte[] pcmBytes = new byte[byteBuffer.remaining()];
             byteBuffer.get(pcmBytes);
             // 获取当前会话对应的SpeechTranscriberTool实例
-            SpeechTranscriberTool speechTranscriberTool = sessionTools.get(session.getId());
-            if (speechTranscriberTool != null) {
-                speechTranscriberTool.process(pcmBytes,sessionId);
+            WebSocketSpeechTranscriber webSocketSpeechTranscriber = sessionTools.get(session.getId());
+            if (webSocketSpeechTranscriber != null) {
+                webSocketSpeechTranscriber.process(pcmBytes,sessionId);
             }
         }
         if (message instanceof TextMessage textMessage) {
@@ -54,9 +55,9 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
             JsonNode jsonNode = objectMapper.readTree(payload);
             // 先处理打断逻辑
             if (jsonNode.has("type") && "interrupt".equals(jsonNode.get("type").asText())) {
-                SpeechTranscriberTool speechTranscriberTool = sessionTools.get(session.getId());
-                if (speechTranscriberTool != null) {
-                    speechTranscriberTool.interrupt();
+                WebSocketSpeechTranscriber webSocketSpeechTranscriber = sessionTools.get(session.getId());
+                if (webSocketSpeechTranscriber != null) {
+                    webSocketSpeechTranscriber.interrupt();
                 }
                 return;
             }
@@ -89,10 +90,10 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         // 为每个新连接创建一个新的SpeechTranscriberTool实例
-        SpeechTranscriberTool speechTranscriberTool = applicationContext.getBean(SpeechTranscriberTool.class);
-        sessionTools.put(session.getId(), speechTranscriberTool);
+        WebSocketSpeechTranscriber webSocketSpeechTranscriber = applicationContext.getBean(WebSocketSpeechTranscriber.class);
+        sessionTools.put(session.getId(), webSocketSpeechTranscriber);
         // 绑定当前会话，用于将AI文本与TTS音频回传到前端
-        speechTranscriberTool.bindSession(session);
+        webSocketSpeechTranscriber.bindSession(session);
         Object uidObj = session.getAttributes().get("userId");
         String nickname = String.valueOf(session.getAttributes().get("nickname"));
         LOG.info("WebSocket 已连接，Session={}, 用户Id={}, 昵称={}", session.getId(), uidObj, nickname);
@@ -101,21 +102,21 @@ public class PcmAudioWebSocketHandler extends AbstractWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession session, org.springframework.web.socket.CloseStatus status) throws Exception {
         String webSocketId = session.getId();
-        SpeechTranscriberTool speechTranscriberTool = sessionTools.get(webSocketId);
+        WebSocketSpeechTranscriber webSocketSpeechTranscriber = sessionTools.get(webSocketId);
         // 取消临时会话标记
         String ephemeralSessionId = voiceSessionIds.remove(webSocketId);
         if (ephemeralSessionId != null) {
             memoryStore.unmarkEphemeralSession(ephemeralSessionId);
         }
         
-        if (speechTranscriberTool != null) {
+        if (webSocketSpeechTranscriber != null) {
             // 清理资源
-            if (speechTranscriberTool.transcriber != null) {
-                speechTranscriberTool.transcriber.stop();
-                speechTranscriberTool.transcriber.close();
+            if (webSocketSpeechTranscriber.transcriber != null) {
+                webSocketSpeechTranscriber.transcriber.stop();
+                webSocketSpeechTranscriber.transcriber.close();
             }
             // 调用shutdown方法清理NlsClient
-            speechTranscriberTool.shutdown();
+            webSocketSpeechTranscriber.shutdown();
             // 从映射中移除
             sessionTools.remove(webSocketId);
         }
