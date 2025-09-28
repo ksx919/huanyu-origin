@@ -27,20 +27,21 @@
           </div>
         </div>
 
-        <div class="info-item">
-          <label class="info-label">密码</label>
-          <div v-if="!showPasswordForm" class="info-display">
-            <button class="change-password-link" @click="showPasswordForm = true">修改密码</button>
-          </div>
-          <div v-else class="password-form">
-            <input type="password" v-model="oldPassword" class="edit-input" placeholder="当前密码">
-            <input type="password" v-model="newPassword" class="edit-input" placeholder="新密码">
-            <input type="password" v-model="confirmPassword" class="edit-input" placeholder="确认新密码" @keyup.enter="savePassword">
-            <div class="password-actions">
-              <button class="confirm-btn" @click="savePassword" :disabled="saving">确认修改</button>
-              <button class="cancel-btn" @click="resetPasswordForm" :disabled="saving">取消</button>
+        <div class="password-actions-container">
+          <transition name="form-expand" mode="out-in">
+            <div v-if="!showPasswordForm" key="change-password-link" class="info-display">
+              <button class="change-password-link" @click="showPasswordForm = true">修改密码</button>
             </div>
-          </div>
+            <div v-else key="password-form" class="password-form">
+              <input type="password" v-model="oldPassword" class="edit-input" placeholder="当前密码">
+              <input type="password" v-model="newPassword" class="edit-input" placeholder="新密码">
+              <input type="password" v-model="confirmPassword" class="edit-input" placeholder="确认新密码" @keyup.enter="savePassword">
+              <div class="password-actions">
+                <button class="confirm-btn" @click="savePassword" :disabled="saving">确认修改</button>
+                <button class="cancel-btn" @click="resetPasswordForm" :disabled="saving">取消</button>
+              </div>
+            </div>
+          </transition>
         </div>
       </div>
 
@@ -244,11 +245,12 @@ const resetPasswordForm = () => {
   grid-template-columns: 180px 1fr;
   gap: 30px;
   width: 100%;
-  max-width: 800px;
+  max-width: 500px;
   padding: 24px;
   border-radius: 16px;
   background: var(--bg-dark-glass);
   backdrop-filter: blur(6px);
+  align-items: center;
 }
 
 .avatar-section {
@@ -278,7 +280,7 @@ const resetPasswordForm = () => {
 .info-section {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 24px;
 }
 
 .info-item {
@@ -322,7 +324,8 @@ const resetPasswordForm = () => {
 }
 
 .edit-input {
-  width: 260px;
+  flex: 1;
+  min-width: 0;
   height: 40px;
   padding: 0 12px;
   border-radius: 10px;
@@ -391,5 +394,65 @@ const resetPasswordForm = () => {
 .message-banner.error {
   background: rgba(128, 0, 0, 0.2);
   color: #ffb0b0;
+}
+.password-actions-container {
+  margin-top: auto;
+  align-self: flex-end;
+}
+
+.password-actions-container .password-form {
+  align-items: flex-end;
+}
+
+.edit-input::placeholder {
+  color: white;
+  opacity: 1;
+}
+
+.form-expand-enter-active,
+.form-expand-leave-active {
+  transition: all 0.4s ease-in-out;
+  overflow: hidden;
+}
+
+.form-expand-enter-from,
+.form-expand-leave-to {
+  max-height: 0;
+  opacity: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  transform: translateY(-10px);
+}
+
+.form-expand-enter-to,
+.form-expand-leave-from {
+  max-height: 300px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+
+.confirm-btn,
+.cancel-btn,
+.change-password-link {
+  transition: all 0.25s ease;
+}
+
+
+.confirm-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 123, 255, 0.5);
+}
+
+.cancel-btn:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+.change-password-link:hover {
+  color: #38b6ff;
+  text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
 }
 </style>

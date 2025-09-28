@@ -2,7 +2,7 @@
   <div class="background-container">
     <div class="background-image"></div>
     <div class="particles">
-      <div class="particle" v-for="n in 30" :key="n"></div>
+      <div class="particle" v-for="n in 150" :key="n"></div>
     </div>
   </div>
 
@@ -34,7 +34,9 @@ const logout = () => {
 };
 </script>
 
-<style>
+<style lang="scss">
+
+@use "sass:math";
 
 :root {
   --text-light: #f4f4f4;
@@ -78,20 +80,50 @@ body {
 
 .particle {
   position: absolute;
-  background: rgba(255, 255, 255, 0.15);
+  background: white;
   border-radius: 50%;
   animation: float 25s infinite linear;
+
+
+  box-shadow: 0 0 10px 5px rgba(255, 255, 255, 0.8),
+  0 0 20px 10px rgba(255, 255, 255, 0.5),
+  0 0 30px 15px rgba(255, 255, 255, 0.2);
+
+  filter: blur(2px);
+
+  z-index: 1;
 }
 
 @keyframes float {
-  0% { transform: translateY(100vh) scale(0); opacity: 1; }
-  100% { transform: translateY(-10vh) scale(1); opacity: 0; }
+  0% {
+    transform: translateY(100vh) scale(0.2);
+    opacity: 0;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  80% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: translateY(30vh) scale(1.2);
+    opacity: 0;
+  }
 }
 
-.particle:nth-child(1) { top: 20%; left: 10%; width: 5px; height: 5px; animation-delay: 0s; animation-duration: 15s; }
-.particle:nth-child(2) { top: 80%; left: 30%; width: 8px; height: 8px; animation-delay: 2s; animation-duration: 20s; }
-.particle:nth-child(30) { top: 50%; left: 90%; width: 6px; height: 6px; animation-delay: 24s; animation-duration: 28s; }
+/*SCSS 循环：调整随机范围 */
+@for $i from 1 through 150 {
+  .particle:nth-child(#{$i}) {
+    $size: (math.random(5) + 4) + px;
+    top: (math.random(100)) + vh;
+    left: (math.random(100)) + vw;
+    width: $size;
+    height: $size;
 
+    animation-delay: (math.random(40)) * -1s;
+    animation-duration: (math.random(20) + 25) + s;
+  }
+}
 
 .main-container {
   display: flex;
@@ -121,8 +153,16 @@ body {
   color: white;
   text-decoration: none;
   margin-left: 20px;
+  transition: all 0.25s ease;
 }
 .header-content nav a:hover {
-  text-decoration: underline;
+  color: #38b6ff;
+  text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
+  text-decoration: none;
+}
+
+.header-content nav a.router-link-active {
+  color: #38b6ff;
+  text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
 }
 </style>
