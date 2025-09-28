@@ -1,133 +1,126 @@
 <template>
-  <div class="background-container">
-    <div class="background-image"></div>
-    <div class="particles">
-      <div class="particle" v-for="n in 30" :key="n"></div>
-    </div>
+  <div v-if="!selectedCharacter" class="selection-screen">
+    <transition appear @before-enter="beforeTitleEnter" @enter="enterTitle">
+      <h1>选择你的对话对象</h1>
+    </transition>
+    <TransitionGroup appear tag="div" class="char-selector" @before-enter="beforeCharEnter" @enter="enterChar">
+      <div v-for="(char, index) in characters" :key="char.id" class="char-card" @click="selectCharacter(char.id)" :data-index="index">
+        <img :src="char.avatar" :alt="char.name" class="char-avatar">
+        <span class="char-name">{{ char.name }}</span>
+      </div>
+    </TransitionGroup>
   </div>
 
-  <div class="main-container">
-    <div v-if="!selectedCharacter" class="selection-screen">
-      <transition appear @before-enter="beforeTitleEnter" @enter="enterTitle">
-        <h1>选择你的对话对象</h1>
-      </transition>
-      <TransitionGroup appear tag="div" class="char-selector" @before-enter="beforeCharEnter" @enter="enterChar">
-        <div v-for="(char, index) in characters" :key="char.id" class="char-card" @click="selectCharacter(char.id)" :data-index="index">
-          <img :src="char.avatar" :alt="char.name" class="char-avatar">
-          <span class="char-name">{{ char.name }}</span>
+  <div v-else class="chat-screen">
+    <Transition name="chatbox-transform" appear>
+      <div class="chat-wrapper">
+        <div class="chat-header">
+          <button @click="deselectCharacter" class="back-button">&lt; 返回</button>
+          <h3>正在与 {{ getCharacterName(selectedCharacter) }} 对话</h3>
+          <div class="status-light" :class="connectionStatus"></div>
         </div>
-      </TransitionGroup>
-    </div>
 
-    <div v-else class="chat-screen">
-      <Transition name="chatbox-transform" appear>
-        <div class="chat-wrapper">
-          <div class="chat-header">
-            <button @click="deselectCharacter" class="back-button">&lt; 返回</button>
-            <h3>正在与 {{ getCharacterName(selectedCharacter) }} 对话</h3>
-            <div class="status-light" :class="connectionStatus"></div>
+        <div v-if="showAuthWarning || !hasToken" class="auth-warning">请先登录以获取令牌</div>
+
+
+
+        <div class="chat-window" ref="chatWindowRef">
+          <div v-if="chatMode === 'voice'" class="voice-avatar-container">
+            <img :src="currentCharacterAvatar" class="voice-avatar" alt="Character Avatar"/>
           </div>
 
-          <div v-if="showAuthWarning || !hasToken" class="auth-warning">请先登录以获取令牌</div>
-
-          
-
-  <div class="chat-window" ref="chatWindowRef">
-            <div v-if="chatMode === 'voice'" class="voice-avatar-container">
-              <img :src="currentCharacterAvatar" class="voice-avatar" alt="Character Avatar"/>
-            </div>
-
-            <template v-if="chatMode === 'text'">
-              <div
+          <template v-if="chatMode === 'text'">
+            <div
                 v-for="(msg, index) in conversation"
                 :key="index"
                 class="message-row"
                 :class="msg.role === 'user' ? 'right' : 'left'"
-              >
-                <img
+            >
+              <img
                   class="avatar"
                   :src="msg.role === 'user' ? userAvatarUrl : currentCharacterAvatar"
                   :alt="msg.role === 'user' ? '用户头像' : '角色头像'"
                   @error="onAvatarError(msg.role)"
-                />
-                <div class="bubble">
-                  <button
+              />
+              <div class="bubble">
+                <button
                     v-if="msg.role === 'ai' && msg.content"
                     @click="playMessageAudio(msg, index)"
                     class="play-audio-btn"
                     :aria-label="isPlaying(index) ? '终止播放' : '播放语音'"
                     :title="isPlaying(index) ? '终止播放' : '播放语音'"
-                  >{{ isPlaying(index) ? '⏹' : '▶' }}</button>
-                  {{ msg.content }}
-                </div>
+                >{{ isPlaying(index) ? '⏹' : '▶' }}</button>
+                {{ msg.content }}
               </div>
-            </template>
-
-            <div v-if="conversation.length === 0" class="empty-chat">
-              {{ chatMode === 'voice' ? '正在进行实时语音通话...' : '可以开始发送消息了！' }}
             </div>
+          </template>
+
+          <div v-if="conversation.length === 0" class="empty-chat">
+            {{ chatMode === 'voice' ? '正在进行实时语音通话...' : '可以开始发送消息了！' }}
           </div>
-
-          <div class="controls">
-            <div v-if="chatMode === 'voice'" class="voice-controls">
-              <button class="record-btn end-call" @click="stopRealtimeVoice">
-                结束对话
-              </button>
-            </div>
-
-            <div v-else class="text-controls">
-              <input
-                  type="text"
-                  v-model="textInput"
-                  @keyup.enter="sendTextMessage"
-                  placeholder="输入消息..."
-              />
-              <button @click="sendTextMessage" class="send-btn">发送</button>
-              <button @mousedown="startVoiceToText" @mouseup="stopVoiceToText" class="voice-to-text-btn" :class="{ recording: isRecording }">🎤</button>
-              <button @click="openCall" class="call-btn" :title="canOpenCall ? '语音通话' : '请先发送消息后再申请通话'">📞</button>
-            </div>
-          </div>
-          <!-- 语音通话弹窗 -->
-          <transition name="call-fade">
-            <div v-if="isCalling" class="call-overlay">
-              <div class="call-card">
-                <img :src="currentCharacterAvatar" class="call-avatar" alt="角色头像" />
-                <div class="call-name">{{ getCharacterName(selectedCharacter) }}</div>
-                <div class="call-status">{{ callStatusText }}</div>
-                <div class="call-actions">
-                  <button class="mute-btn" @click="toggleMute">{{ isMuted ? '取消静音' : '静音' }}</button>
-                  <button class="end-call-btn" @click="endCall">挂断</button>
-                </div>
-              </div>
-            </div>
-          </transition>
-          <!-- Toast 弹窗容器 -->
-          <transition name="toast-fade">
-            <div v-if="toastVisible" class="toast">{{ toastText }}</div>
-          </transition>
-
-          <!-- 通话资格提示弹窗 -->
-          <transition name="call-fade">
-            <div v-if="showCallHint" class="modal-overlay">
-              <div class="modal-card">
-                <div class="modal-title">提示</div>
-                <div class="modal-content">请先向该角色发送一条消息，再申请通话</div>
-                <button class="modal-ok" @click="showCallHint = false">我知道了</button>
-              </div>
-            </div>
-          </transition>
-
-          <!-- 语音识别加载遮罩 -->
-          <transition name="call-fade">
-            <div v-if="isTranscribing" class="transcribe-overlay">
-              <div class="spinner"></div>
-              <div class="transcribe-text">正在识别...</div>
-            </div>
-          </transition>
         </div>
-      </Transition>
-    </div>
+
+        <div class="controls">
+          <div v-if="chatMode === 'voice'" class="voice-controls">
+            <button class="record-btn end-call" @click="stopRealtimeVoice">
+              结束对话
+            </button>
+          </div>
+
+          <div v-else class="text-controls">
+            <input
+                type="text"
+                v-model="textInput"
+                @keyup.enter="sendTextMessage"
+                placeholder="输入消息..."
+            />
+            <button @click="sendTextMessage" class="send-btn">发送</button>
+            <button @mousedown="startVoiceToText" @mouseup="stopVoiceToText" class="voice-to-text-btn" :class="{ recording: isRecording }">🎤</button>
+            <button @click="openCall" class="call-btn" :title="canOpenCall ? '语音通话' : '请先发送消息后再申请通话'">📞</button>
+          </div>
+        </div>
+
+        <!-- Toast 弹窗容器 -->
+        <transition name="toast-fade">
+          <div v-if="toastVisible" class="toast">{{ toastText }}</div>
+        </transition>
+
+        <!-- 通话资格提示弹窗 -->
+        <transition name="call-fade">
+          <div v-if="showCallHint" class="modal-overlay">
+            <div class="modal-card">
+              <div class="modal-title">提示</div>
+              <div class="modal-content">请先向该角色发送一条消息，再申请通话</div>
+              <button class="modal-ok" @click="showCallHint = false">我知道了</button>
+            </div>
+          </div>
+        </transition>
+
+        <!-- 语音识别加载遮罩 -->
+        <transition name="call-fade">
+          <div v-if="isTranscribing" class="transcribe-overlay">
+            <div class="spinner"></div>
+            <div class="transcribe-text">正在识别...</div>
+          </div>
+        </transition>
+      </div>
+    </Transition>
   </div>
+
+  <!-- 语音通话弹窗 -->
+  <transition name="call-fade">
+    <div v-if="isCalling" class="call-overlay">
+      <div class="call-card">
+        <img :src="currentCharacterAvatar" class="call-avatar" alt="角色头像" />
+        <div class="call-name">{{ getCharacterName(selectedCharacter) }}</div>
+        <div class="call-status">{{ callStatusText }}</div>
+        <div class="call-actions">
+          <button class="mute-btn" @click="toggleMute">{{ isMuted ? '取消静音' : '静音' }}</button>
+          <button class="end-call-btn" @click="endCall">挂断</button>
+        </div>
+      </div>
+    </div>
+  </transition>
 </template>
 
 <script setup lang="ts">
@@ -459,11 +452,11 @@ const loadHistory = async () => {
     }
     // 后端 ChatMessageResp: { messageType: 'USER'|'ASSISTANT', content: string }
     const mapped: ChatMessage[] = list
-      .filter((m: any) => m && typeof m.content === 'string' && typeof m.messageType === 'string')
-      .map((m: any) => ({
-        role: m.messageType === 'USER' ? 'user' : 'ai',
-        content: m.content,
-      } as ChatMessage));
+        .filter((m: any) => m && typeof m.content === 'string' && typeof m.messageType === 'string')
+        .map((m: any) => ({
+          role: m.messageType === 'USER' ? 'user' : 'ai',
+          content: m.content,
+        } as ChatMessage));
     conversation.value = mapped;
     await nextTick();
     scrollToBottom();
@@ -910,9 +903,9 @@ function pushPcmToPlay(pcmBytes: Uint8Array) {
 
 function readFourCC(view: DataView, offset: number): string {
   return String.fromCharCode(view.getUint8(offset)) +
-         String.fromCharCode(view.getUint8(offset + 1)) +
-         String.fromCharCode(view.getUint8(offset + 2)) +
-         String.fromCharCode(view.getUint8(offset + 3));
+      String.fromCharCode(view.getUint8(offset + 1)) +
+      String.fromCharCode(view.getUint8(offset + 2)) +
+      String.fromCharCode(view.getUint8(offset + 3));
 }
 
 function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: number; bitsPerSample: number; dataOffset: number } | null {
@@ -960,15 +953,7 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 }
 </script>
 
-<style>
-
-.main-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  color: var(--text-light);
-}
+<style scoped>
 
 .chat-screen {
   width: 750px;
@@ -978,19 +963,31 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 
 .selection-screen {
   text-align: center;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .selection-screen h1 {
+  position: absolute;
+  width: 100%;
+  left: 0;
+  text-align: center;
+  top: 50%;
+  margin-top: -250px;
   font-size: 3rem;
   font-weight: 300;
   text-shadow: 0 0 15px rgba(0,0,0,0.5);
-  margin-bottom: 50px;
+  margin-bottom: 0;
 }
 
 .char-selector {
   display: flex;
   justify-content: center;
-  gap: 40px;
+  gap: 80px;
 }
 
 .char-card {
@@ -1002,17 +999,18 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 }
 
 .char-card:hover {
-  transform: scale(1.1);
+  transform: translateY(-10px);
 }
 
 .char-avatar {
-  width: 150px;
-  height: 150px;
+  width: 200px;
+  height: 200px;
   border-radius: 50%;
   border: 4px solid rgba(255, 255, 255, 0.5);
   box-shadow: 0 5px 20px rgba(0,0,0,0.4);
   margin-bottom: 15px;
   object-fit: cover;
+  transition: all 0.3s ease-out;
 }
 
 .char-name {
@@ -1211,12 +1209,15 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 }
 
 .call-card {
-  width: 320px; /* 固定为当前最大尺寸 */
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 16px;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.25);
-  padding: 24px;
+  width: 320px;
+  background: rgba(30, 30, 45, 0.6);
+  backdrop-filter: blur(15px);
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.3);
+  padding: 32px 24px;
   text-align: center;
+  color: #f0f0f0;
 }
 
 .call-avatar {
@@ -1229,33 +1230,56 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 }
 
 .call-name {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 500;
+  color: #ffffff;
+  margin-top: 16px;
 }
-
 .call-status {
-  margin-top: 4px;
-  color: #666;
+  margin-top: 8px;
+  color: rgba(255, 255, 255, 0.7);
   font-size: 14px;
 }
 
 .call-actions {
   display: flex;
-  gap: 12px;
-  margin-top: 16px;
+  gap: 16px;
+  margin-top: 24px;
   justify-content: center;
 }
 
+.mute-btn,
 .end-call-btn {
-  background: #ff4d4f;
-  color: #fff;
   border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
+  padding: 12px 24px;
+  border-radius: 50px;
   cursor: pointer;
+  font-size: 16px;
+  font-weight: 500;
+  transition: all 0.25s ease-out;
 }
 
-/* 通话资格提示弹窗样式 */
+.mute-btn {
+  background: rgba(255, 255, 255, 0.15);
+  color: #f0f0f0;
+}
+
+.end-call-btn {
+  background: #e63946;
+  color: #ffffff;
+}
+
+.mute-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+  transform: translateY(-2px);
+}
+
+.end-call-btn:hover {
+  background: #d62828;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(230, 57, 70, 0.4);
+}
+
 .modal-overlay {
   position: fixed;
   inset: 0;
@@ -1286,15 +1310,6 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 .modal-ok {
   background: #007bff;
   color: #fff;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-}
-
-.mute-btn {
-  background: #f0f0f0;
-  color: #333;
   border: none;
   padding: 8px 16px;
   border-radius: 8px;
@@ -1400,9 +1415,45 @@ function tryParseWavHeader(buf: Uint8Array): { sampleRate: number; channels: num
 .send-btn {
   background: #007bff;
   color: white;
+  padding: 10px 15px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
 }
 .voice-to-text-btn.recording {
   background: #dc3545;
   color: white;
+}
+
+.char-card:hover .char-avatar {
+  transform: scale(1.1);
+
+  box-shadow:
+      0 0 15px rgba(255, 255, 255, 0.6),
+      0 0 30px rgba(180, 220, 255, 0.4),
+      0 8px 25px rgba(0,0,0,0.5);
+}
+
+.chat-header h3 {
+  flex-grow: 1;
+  text-align: center;
+  margin: 0 10px;
+}
+
+.send-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 20px rgba(0, 123, 255, 0.5);
+}
+
+.voice-to-text-btn,
+.call-btn {
+  transition: all 0.25s ease-out;
+}
+
+.voice-to-text-btn:hover:not(.recording),
+.call-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
 }
 </style>

@@ -1,53 +1,52 @@
 <template>
   <div class="form-wrapper">
-<!--    <div class="dev-actions">-->
-<!--      <button @click="fakeLogin" class="dev-btn">【开发用】一键登录</button>-->
-<!--    </div>-->
     <div class="mode-switcher">
       <button :class="{ active: mode === 'login' }" @click="setMode('login')">登录</button>
       <button :class="{ active: mode === 'register' }" @click="setMode('register')">注册</button>
     </div>
 
-<div v-if="mode === 'login'">
-  <h1 class="form-title">欢迎回来</h1>
-  <div class="form-group">
-    <input type="email" v-model="form.email" placeholder="邮箱地址">
-  </div>
-  <div class="form-group">
-    <input type="password" v-model="form.password" placeholder="密码">
-  </div>
-  <button @click="handleLogin" class="submit-btn" :disabled="isLoggingIn">{{ isLoggingIn ? '登录中...' : '登 录' }}</button>
-</div>
-
-    <div v-if="mode === 'register'">
-      <h1 class="form-title">创建新账户</h1>
-      <div class="form-group">
-        <input type="email" v-model="form.email" placeholder="邮箱地址">
-      </div>
-      <div class="form-group">
-        <input type="text" v-model="form.nickname" placeholder="昵称">
-      </div>
-      <div class="form-group">
-        <input type="password" v-model="form.password" placeholder="请输入密码">
-      </div>
-      <div class="form-group">
-        <input type="password" v-model="form.confirmPassword" placeholder="请确认密码">
-      </div>
-      <div class="form-group captcha-group">
-        <input type="text" v-model="form.graphicCaptchaCode" placeholder="图形验证码">
-        <div class="captcha-image" @click="getGraphicCaptcha">
-          <img v-if="graphicCaptchaImage" :src="graphicCaptchaImage" alt="图形验证码">
-          <span v-else>...</span>
+    <transition name="form-fade" mode="out-in">
+      <div v-if="mode === 'login'" key="login-form">
+        <h1 class="form-title">欢迎回来</h1>
+        <div class="form-group">
+          <input type="email" v-model="form.email" placeholder="邮箱地址">
         </div>
+        <div class="form-group">
+          <input type="password" v-model="form.password" placeholder="密码">
+        </div>
+        <button @click="handleLogin" class="submit-btn" :disabled="isLoggingIn">{{ isLoggingIn ? '登录中...' : '登 录' }}</button>
       </div>
-      <div class="form-group captcha-group">
-        <input type="text" v-model="form.emailCode" placeholder="请输入邮箱验证码">
-        <button @click="handleRegistrationStep1" :disabled="cooldown > 0" class="email-code-btn">
-          {{ cooldown > 0 ? `${cooldown}s` : (emailCodeSent ? '重新发送' : '发送验证码') }}
-        </button>
+
+      <div v-else key="register-form">
+        <h1 class="form-title">创建新账户</h1>
+        <div class="form-group">
+          <input type="email" v-model="form.email" placeholder="邮箱地址">
+        </div>
+        <div class="form-group">
+          <input type="text" v-model="form.nickname" placeholder="昵称">
+        </div>
+        <div class="form-group">
+          <input type="password" v-model="form.password" placeholder="请输入密码">
+        </div>
+        <div class="form-group">
+          <input type="password" v-model="form.confirmPassword" placeholder="请确认密码">
+        </div>
+        <div class="form-group captcha-group">
+          <input type="text" v-model="form.graphicCaptchaCode" placeholder="图形验证码">
+          <div class="captcha-image" @click="getGraphicCaptcha">
+            <img v-if="graphicCaptchaImage" :src="graphicCaptchaImage" alt="图形验证码">
+            <span v-else>...</span>
+          </div>
+        </div>
+        <div class="form-group captcha-group">
+          <input type="text" v-model="form.emailCode" placeholder="请输入邮箱验证码">
+          <button @click="handleRegistrationStep1" :disabled="cooldown > 0" class="email-code-btn">
+            {{ cooldown > 0 ? `${cooldown}s` : (emailCodeSent ? '重新发送' : '发送验证码') }}
+          </button>
+        </div>
+        <button @click="handleFinalRegistration" class="submit-btn" :disabled="isRegistering">{{ isRegistering ? '注册中...' : '注 册' }}</button>
       </div>
-  <button @click="handleFinalRegistration" class="submit-btn" :disabled="isRegistering">{{ isRegistering ? '注册中...' : '注 册' }}</button>
-    </div>
+    </transition>
 
     <p v-if="errorMessage" class="error-message">{{ errorMessage }}</p>
   </div>
@@ -84,20 +83,6 @@ const isLoggingIn = ref(false);
 const isRegistering = ref(false);
 
 const router = useRouter();
-
-// const fakeLogin = () => {
-//   console.log("执行开发者模拟登录...");
-//   // 模拟从后端获取的数据
-//   const fakeToken = 'dev-fake-token-1234567890';
-//   const fakeNickname = '开发者';
-//   const fakeAvatar = null; // 或者一个图片URL
-//
-//   // 手动调用我们 store 里的 login 方法
-//   authState.login(fakeToken, fakeNickname, fakeAvatar);
-//
-//   // 手动跳转到主页
-//   router.push('/');
-// };
 
 //通用函数
 const getGraphicCaptcha = async () => {
@@ -387,5 +372,29 @@ input::placeholder {
   text-align: center;
   margin-bottom: 20px;
   color: rgba(255, 255, 255, 0.8);
+}
+
+
+.form-fade-enter-active,
+.form-fade-leave-active {
+  transition:
+      max-height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1),
+      opacity 0.3s ease-in-out,
+      transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+  overflow: hidden;
+}
+
+.form-fade-enter-from,
+.form-fade-leave-to {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(15px);
+}
+
+.form-fade-enter-to,
+.form-fade-leave-from {
+  max-height: 500px;
+  opacity: 1;
+  transform: translateY(0);
 }
 </style>
