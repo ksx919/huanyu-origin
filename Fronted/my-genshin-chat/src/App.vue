@@ -156,6 +156,7 @@ body {
   transition: all 0.25s ease;
 }
 .header-content nav a:hover {
+
   color: #38b6ff;
   text-shadow: 0 0 8px rgba(56, 182, 255, 0.8);
   text-decoration: none;
