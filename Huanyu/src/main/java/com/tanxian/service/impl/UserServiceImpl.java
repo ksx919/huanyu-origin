@@ -57,7 +57,7 @@ public class UserServiceImpl implements UserService {
         user.setEmail(registerReq.getEmail());
         user.setPasswordHash(PasswordUtil.encryptPassword(registerReq.getPassword()));
         user.setNickname(registerReq.getNickname());
-        user.setAvatarUrl("1758945585361_f54ae96b267546fcb4fa2a4db957f98b.png");
+        user.setAvatarUrl("/huanyu/avatar/1758945585361_f54ae96b267546fcb4fa2a4db957f98b.png");
         user.setCreatedAt(LocalDateTime.now());
         user.setUpdatedAt(LocalDateTime.now());
         

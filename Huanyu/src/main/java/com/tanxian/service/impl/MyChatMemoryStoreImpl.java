@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -57,6 +58,14 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
     private final Map<String, String> systemMessageCache = new ConcurrentHashMap<>();
     // 标记不需要持久化到数据库的会话（例如语音通话会话）
     private final Set<String> ephemeralSessions = ConcurrentHashMap.newKeySet();
+    // 语音通话临时标记使用的 Redis 前缀与 TTL 设置
+    private static final String EPHEMERAL_KEY_PREFIX = "chat:ephemeral:";
+    private static final Duration EPHEMERAL_TTL = Duration.ofMinutes(10);
+    // 为避免连接关闭与入库之间的竞态，这里为取消标记设置一个短暂保护期
+    private static final Duration EPHEMERAL_GRACE_TTL = Duration.ofSeconds(3);
+    // 语音阶段产生的消息哈希集合前缀与TTL（用于永不入库）
+    private static final String EPHEMERAL_MSG_SET_PREFIX = "chat:ephemeral:msg:";
+    private static final Duration EPHEMERAL_MSG_TTL = Duration.ofHours(6);
 
     // 标记是否已初始化
     private volatile boolean initialized = false;
@@ -292,6 +301,16 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             // 若为短暂会话（语音通话），跳过数据库持久化
             if (isEphemeralSession(sessionId)) {
                 log.info("会话 {} 标记为临时（语音通话），跳过数据库存储", sessionId);
+                // 记录语音阶段的最新消息哈希，避免之后因为窗口缓存导致误入库
+                try {
+                    if (!nonSystemMessages.isEmpty()) {
+                        dev.langchain4j.data.message.ChatMessage lastMessage =
+                                nonSystemMessages.get(nonSystemMessages.size() - 1);
+                        recordEphemeralMessageHash(sessionId, lastMessage);
+                    }
+                } catch (Exception e) {
+                    log.warn("记录语音阶段消息哈希失败: sessionId={}", sessionId, e);
+                }
             } else {
                 // 完整存储所有消息到数据库（不受内存窗口限制）
                 storeAllMessagesToDatabase(sessionId, nonSystemMessages);
@@ -306,23 +325,47 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
      * 标记某个会话为临时（不入库）
      */
     public void markEphemeralSession(String sessionId) {
-        ephemeralSessions.add(sessionId);
-        log.info("已标记临时会话，不入库: {}", sessionId);
+        try {
+            ephemeralSessions.add(sessionId);
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            // 使用 Redis 写入标记并设置较长 TTL，保证多实例下共享
+            redisTemplate.opsForValue().set(key, "1", EPHEMERAL_TTL);
+            log.info("已标记临时会话，不入库（Redis TTL={}）: {}", EPHEMERAL_TTL, sessionId);
+        } catch (Exception e) {
+            log.warn("标记临时会话到 Redis 失败，退回仅本地标记: {}", sessionId, e);
+        }
     }
 
     /**
      * 取消临时标记
      */
     public void unmarkEphemeralSession(String sessionId) {
-        ephemeralSessions.remove(sessionId);
-        log.info("已取消临时会话标记: {}", sessionId);
+        try {
+            ephemeralSessions.remove(sessionId);
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            // 直接删除可能与入库过程竞争，这里设置一个短暂保护 TTL，避免尾段消息误入库
+            redisTemplate.opsForValue().set(key, "1", EPHEMERAL_GRACE_TTL);
+            log.info("已取消本地临时标记，Redis 设置短暂保护期（{}）: {}", EPHEMERAL_GRACE_TTL, sessionId);
+        } catch (Exception e) {
+            log.warn("取消临时标记时 Redis 操作失败，仅移除本地标记: {}", sessionId, e);
+        }
     }
 
     /**
      * 判断是否为临时会话
      */
     public boolean isEphemeralSession(String sessionId) {
-        return ephemeralSessions.contains(sessionId);
+        // 先检查本地标记
+        if (ephemeralSessions.contains(sessionId)) return true;
+        // 再检查 Redis 标记，保证多实例与时序安全
+        try {
+            String key = EPHEMERAL_KEY_PREFIX + sessionId;
+            String val = redisTemplate.opsForValue().get(key);
+            return StringUtils.hasText(val);
+        } catch (Exception e) {
+            log.warn("检查 Redis 临时会话标记失败，回退到本地标记: {}", sessionId, e);
+            return false;
+        }
     }
 
     @Override
@@ -436,6 +479,12 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             if (!currentWindowMessages.isEmpty()) {
                 // 获取当前窗口中的最后一条消息
                 dev.langchain4j.data.message.ChatMessage lastMessage = currentWindowMessages.get(currentWindowMessages.size() - 1);
+
+                // 如果最后一条消息是在语音阶段产生过（哈希存在于Redis集合），则永不入库
+                if (isEphemeralPhaseMessage(sessionId, lastMessage)) {
+                    log.info("跳过语音阶段消息的入库（哈希命中）: sessionId={}", sessionId);
+                    return;
+                }
                 
                 // 检查这条消息是否已经存在于数据库中
                 if (!isMessageExistsInDatabase(sessionId, lastMessage)) {
@@ -458,6 +507,60 @@ public class MyChatMemoryStoreImpl implements MyChatMemoryStore {
             
         } catch (Exception e) {
             log.error("完整存储消息到数据库失败，sessionId: {}", sessionId, e);
+        }
+    }
+
+    /**
+     * 记录语音阶段产生的消息哈希到 Redis 集合
+     */
+    private void recordEphemeralMessageHash(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String key = EPHEMERAL_MSG_SET_PREFIX + sessionId;
+            String hash = hashMessageForDedup(message);
+            if (StringUtils.hasText(hash)) {
+                redisTemplate.opsForSet().add(key, hash);
+                redisTemplate.expire(key, EPHEMERAL_MSG_TTL);
+                log.debug("记录语音阶段消息哈希: {} -> {}", sessionId, hash);
+            }
+        } catch (Exception e) {
+            log.warn("记录语音阶段消息哈希失败: sessionId={}", sessionId, e);
+        }
+    }
+
+    /**
+     * 判断消息是否属于语音阶段（哈希在 Redis 集合中）
+     */
+    private boolean isEphemeralPhaseMessage(String sessionId, dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String key = EPHEMERAL_MSG_SET_PREFIX + sessionId;
+            String hash = hashMessageForDedup(message);
+            if (!StringUtils.hasText(hash)) return false;
+            Boolean member = redisTemplate.opsForSet().isMember(key, hash);
+            return Boolean.TRUE.equals(member);
+        } catch (Exception e) {
+            log.warn("检查语音阶段消息哈希失败: sessionId={}", sessionId, e);
+            return false;
+        }
+    }
+
+    /**
+     * 为消息生成去重哈希（类型+内容 的 SHA-1）
+     */
+    private String hashMessageForDedup(dev.langchain4j.data.message.ChatMessage message) {
+        try {
+            String type = getMessageType(message);
+            String content = getMessageContent(message);
+            String payload = type + "|" + (content == null ? "" : content);
+            MessageDigest md = MessageDigest.getInstance("SHA-1");
+            byte[] digest = md.digest(payload.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("生成消息哈希失败: {}", message, e);
+            return null;
         }
     }
     

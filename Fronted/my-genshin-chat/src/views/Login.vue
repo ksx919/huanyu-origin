@@ -143,34 +143,37 @@ const setMode = (newMode: 'login' | 'register') => {
 };
 
 //注册流程
-const handleRegistrationStep1 = async () => {
+const handleRegistrationStep1 = () => {
   // 发送邮箱验证码，仅校验邮箱与图形验证码
   if (!form.email || !form.graphicCaptchaCode || !graphicCaptchaId.value) {
     errorMessage.value = '请先填写邮箱与图形验证码！';
     return;
   }
 
-  try {
-    //获取邮箱验证码
-    const response = await http.post('/user/email-code', {
-      email: form.email,
-      captchaId: graphicCaptchaId.value,
-      captchaCode: form.graphicCaptchaCode,
-    });
-    // 根据后端响应判断是否发送成功
-    if (response.data?.success) {
-      startCooldown();
-      emailCodeSent.value = true;
-      errorMessage.value = '';
-    } else {
-      errorMessage.value = response.data?.message || '发送验证码失败，请重试';
-      getGraphicCaptcha(); // 失败后刷新图形验证码
-    }
+  // 若处于倒计时中，直接返回，避免重复点击
+  if (cooldown.value > 0) return;
 
-  } catch (error: any) {
-    errorMessage.value = error.response?.data?.message || '请求失败，请重试';
-    getGraphicCaptcha(); // 失败后刷新图形验证码
-  }
+  // 点击后立即开始倒计时与标记，无需等待后端响应
+  startCooldown();
+  emailCodeSent.value = true;
+  errorMessage.value = '';
+
+  // 后台异步请求，不阻塞 UI
+  http.post('/user/email-code', {
+    email: form.email,
+    captchaId: graphicCaptchaId.value,
+    captchaCode: form.graphicCaptchaCode,
+  }).then((response) => {
+    if (!response.data?.success) {
+      errorMessage.value = response.data?.message || '发送验证码失败，请稍后重试';
+      // 失败后刷新图形验证码，但不影响倒计时
+      getGraphicCaptcha();
+    }
+  }).catch((error: any) => {
+    errorMessage.value = error?.response?.data?.message || '请求失败，请稍后重试';
+    // 失败后刷新图形验证码，但不影响倒计时
+    getGraphicCaptcha();
+  });
 };
 
 const resendEmailCode = () => {
