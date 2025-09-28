@@ -2,7 +2,7 @@
   <div class="background-container">
     <div class="background-image"></div>
     <div class="particles">
-      <div class="particle" v-for="n in 200" :key="n"></div>
+      <div class="particle" v-for="n in 150" :key="n"></div>
     </div>
   </div>
 
@@ -35,6 +35,8 @@ const logout = () => {
 </script>
 
 <style lang="scss">
+
+@use "sass:math";
 
 :root {
   --text-light: #f4f4f4;
@@ -78,7 +80,7 @@ body {
 
 .particle {
   position: absolute;
-  background: rgba(255, 255, 255, 0.6);
+  background: white;
   border-radius: 50%;
   animation: float 25s infinite linear;
 
@@ -110,17 +112,16 @@ body {
 }
 
 /*SCSS 循环：调整随机范围 */
-@for $i from 1 through 200 {
+@for $i from 1 through 150 {
   .particle:nth-child(#{$i}) {
-    $size: (random(5) + 4) + px;
-
-    top: (random(100)) + vh;
-    left: (random(100)) + vw;
+    $size: (math.random(5) + 4) + px;
+    top: (math.random(100)) + vh;
+    left: (math.random(100)) + vw;
     width: $size;
     height: $size;
 
-    animation-delay: (random(40)) * -1s;
-    animation-duration: (random(20) + 25) + s;
+    animation-delay: (math.random(40)) * -1s;
+    animation-duration: (math.random(20) + 25) + s;
   }
 }
 
